@@ -1,0 +1,101 @@
+"""SQLAlchemy ORM 模型"""
+
+from sqlalchemy import Column, Integer, Text, REAL, Boolean, ForeignKey, UniqueConstraint, Index
+from sqlalchemy.orm import relationship, DeclarativeBase
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Trajectory(Base):
+    __tablename__ = "trajectories"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Text, nullable=False, unique=True, index=True)
+
+    # 工具来源
+    tool_source = Column(Text, nullable=False, default="claude-code")
+    model = Column(Text, nullable=False, default="")
+
+    # 时间
+    start_time = Column(Text)
+    end_time = Column(Text)
+    duration_ms = Column(Integer)
+
+    # Token
+    tokens_sent = Column(Integer, default=0)
+    tokens_received = Column(Integer, default=0)
+    cache_read_tokens = Column(Integer, default=0)
+    cache_creation_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    total_cost_usd = Column(REAL, default=0.0)
+
+    # 轨迹
+    total_steps = Column(Integer, default=0)
+    total_api_calls = Column(Integer, default=0)
+    exit_status = Column(Text, default="")
+    tools_used = Column(Text, default="[]")       # JSON 数组
+    files_edited = Column(Text, default="[]")     # JSON 数组
+
+    # 环境
+    working_directory = Column(Text, default="")
+
+    # 分类
+    task_type = Column(Text, default="")
+    project_name = Column(Text, default="")
+    tags = Column(Text, default="[]")             # JSON 数组
+
+    # 质量
+    quality_rating = Column(Integer, nullable=True)
+    quality_status = Column(Text, default="unreviewed")
+    quality_notes = Column(Text, default="")
+
+    # 特征
+    has_thinking = Column(Boolean, default=False)
+    has_sub_agent = Column(Boolean, default=False)
+    first_prompt = Column(Text, default="")
+
+    # 文件
+    traj_file_path = Column(Text, nullable=False)
+    traj_file_size = Column(Integer, default=0)
+
+    # 时间戳
+    uploaded_at = Column(Text, nullable=False)
+    updated_at = Column(Text, nullable=False)
+
+    __table_args__ = (
+        Index("idx_traj_tool_source", "tool_source"),
+        Index("idx_traj_model", "model"),
+        Index("idx_traj_start_time", "start_time"),
+        Index("idx_traj_task_type", "task_type"),
+        Index("idx_traj_quality_status", "quality_status"),
+        Index("idx_traj_exit_status", "exit_status"),
+        Index("idx_traj_project_name", "project_name"),
+    )
+
+
+class CompareGroup(Base):
+    __tablename__ = "compare_groups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(Text, nullable=False)
+    description = Column(Text, default="")
+    task_prompt = Column(Text, default="")
+    created_at = Column(Text, nullable=False)
+
+    items = relationship("CompareGroupItem", back_populates="group", cascade="all, delete-orphan")
+
+
+class CompareGroupItem(Base):
+    __tablename__ = "compare_group_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(Integer, ForeignKey("compare_groups.id", ondelete="CASCADE"), nullable=False)
+    trajectory_id = Column(Integer, ForeignKey("trajectories.id", ondelete="CASCADE"), nullable=False)
+    notes = Column(Text, default="")
+
+    group = relationship("CompareGroup", back_populates="items")
+    trajectory = relationship("Trajectory")
+
+    __table_args__ = (UniqueConstraint("group_id", "trajectory_id"),)

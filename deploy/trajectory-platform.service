@@ -1,0 +1,20 @@
+[Unit]
+Description=Trajectory Platform Backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/trajectory-platform/backend
+Environment=PATH=/opt/trajectory-platform/backend/venv/bin:/usr/bin
+EnvironmentFile=/opt/trajectory-platform/.env
+ExecStart=/opt/trajectory-platform/backend/venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8900 \
+    --workers 2 \
+    --log-level info
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

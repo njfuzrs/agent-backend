@@ -1,0 +1,12 @@
+# trajectory-platform
+
+.env
+backend/.env
+data/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.vite/
+venv/
+package-lock.json
