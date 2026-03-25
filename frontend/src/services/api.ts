@@ -7,9 +7,10 @@ import type {
   TrajectoryStepsResponse,
 } from '../types/trajectory'
 
-// 开发环境通过 vite proxy 转发，生产环境通过 nginx 反代
+// 开发环境通过 vite proxy 转发（/api），生产环境走 /traj/api
+const isProd = import.meta.env.PROD
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: isProd ? '/traj/api/v1' : '/api/v1',
   auth: {
     username: localStorage.getItem('auth_user') || 'admin',
     password: localStorage.getItem('auth_pass') || '',
