@@ -47,7 +47,7 @@ export default function TrajectoryDetail() {
 
   const { data: steps, isLoading: stepsLoading } = useQuery({
     queryKey: ['trajectory-steps', sessionId],
-    queryFn: () => fetchTrajectorySteps(sessionId!, 0, 500),
+    queryFn: () => fetchTrajectorySteps(sessionId!, 0, 200),
     enabled: !!sessionId && activeTab === 'timeline',
   })
 
