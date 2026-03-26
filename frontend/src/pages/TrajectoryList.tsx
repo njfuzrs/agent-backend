@@ -124,15 +124,11 @@ export default function TrajectoryList() {
       render: (v: string) => EXIT_STATUS_ICON[v] || <span>{v || '-'}</span>,
     },
     {
-      title: '工具',
-      dataIndex: 'tools_used',
-      width: 180,
-      render: (tools: string[]) => (
-        <Space size={2} wrap>
-          {tools?.slice(0, 4).map(t => <Tag key={t} style={{ fontSize: 11 }}>{t}</Tag>)}
-          {tools?.length > 4 && <Tag>+{tools.length - 4}</Tag>}
-        </Space>
-      ),
+      title: '用户',
+      dataIndex: 'user_id',
+      width: 100,
+      ellipsis: true,
+      render: (v: string | null) => v || '-',
     },
   ]
 

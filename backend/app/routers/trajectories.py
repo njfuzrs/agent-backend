@@ -327,6 +327,7 @@ def _to_list_item(r: Trajectory) -> TrajectoryListItem:
         task_type=r.task_type,
         project_name=r.project_name,
         tags=_parse_json_field(r.tags),
+        user_id=r.user_id,
     )
 
 

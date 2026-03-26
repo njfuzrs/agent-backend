@@ -1,9 +1,12 @@
-""".traj 文件解析服务：从 .traj JSON 中提取元数据写入 SQLite"""
+""".traj 文件解析服务：从 .traj JSON 中提取元数据写入数据库"""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
+
+# 统一使用东八区本地时间存储，确保不同来源的时间可比较
+_LOCAL_TZ = timezone(timedelta(hours=8))
 
 
 def parse_traj_content(content: bytes, tool_source: str = "claude-code") -> dict:
@@ -42,8 +45,8 @@ def parse_traj_content(content: bytes, tool_source: str = "claude-code") -> dict
         "session_id": session_id,
         "tool_source": tool_source,
         "model": metadata.get("model", ""),
-        "start_time": metadata.get("start_time"),
-        "end_time": metadata.get("end_time"),
+        "start_time": _normalize_time(metadata.get("start_time")),
+        "end_time": _normalize_time(metadata.get("end_time")),
         "duration_ms": duration_ms,
         "tokens_sent": model_stats.get("tokens_sent", 0),
         "tokens_received": model_stats.get("tokens_received", 0),
@@ -86,6 +89,26 @@ def _extract_first_prompt(traj_data: dict, metadata: dict) -> str:
             return str(content)[:500]
 
     return ""
+
+
+def _normalize_time(time_str: Optional[str]) -> Optional[str]:
+    """将时间字符串归一化为东八区本地时间（不带时区后缀），确保排序一致。
+
+    - 带 Z 或 +00:00 的 UTC 时间 → 转为 +08:00 后去掉时区后缀
+    - 不带时区的本地时间 → 原样返回（已经是本地时间）
+    """
+    if not time_str:
+        return None
+    try:
+        # 处理 Z 后缀
+        normalized = time_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is not None:
+            # 有时区信息，转为东八区后去掉时区
+            dt = dt.astimezone(_LOCAL_TZ).replace(tzinfo=None)
+        return dt.isoformat()
+    except (ValueError, TypeError, AttributeError):
+        return time_str
 
 
 def _calc_duration(metadata: dict) -> Optional[int]:

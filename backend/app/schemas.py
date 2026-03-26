@@ -27,6 +27,7 @@ class TrajectoryListItem(BaseModel):
     task_type: str = ""
     project_name: str = ""
     tags: list[str] = []
+    user_id: Optional[str] = None
 
 
 class TrajectoryListResponse(BaseModel):

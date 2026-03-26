@@ -22,6 +22,7 @@ export interface TrajectoryListItem {
   task_type: string
   project_name: string
   tags: string[]
+  user_id: string | null
 }
 
 export interface TrajectoryMeta extends TrajectoryListItem {
