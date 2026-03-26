@@ -159,12 +159,22 @@ def migrate_trajectories(src: sqlite3.Connection, dst):
         ON CONFLICT (session_id) DO NOTHING
     """
 
+    # boolean 列在 SQLite 中存为 0/1，PG 需要转为 True/False
+    bool_cols = {"has_thinking", "has_sub_agent"}
+    bool_indexes = [i for i, c in enumerate(cols_to_migrate) if c in bool_cols]
+
     count = 0
     for row in rows:
         try:
-            cur_dst.execute(insert_sql, row)
+            # 转换 boolean 列
+            row_list = list(row)
+            for idx in bool_indexes:
+                row_list[idx] = bool(row_list[idx]) if row_list[idx] is not None else False
+            cur_dst.execute(insert_sql, tuple(row_list))
+            dst.commit()
             count += 1
         except Exception as e:
+            dst.rollback()
             print(f"  跳过记录: {e}")
 
     # 重置序列（让 PG 的 id 自增从最大值继续）
@@ -172,8 +182,8 @@ def migrate_trajectories(src: sqlite3.Connection, dst):
     max_id = cur_dst.fetchone()[0]
     if max_id:
         cur_dst.execute(f"SELECT setval('trajectories_id_seq', {max_id})")
-
     dst.commit()
+
     print(f"迁移 trajectories: {count}/{len(rows)} 条")
     return count
 
