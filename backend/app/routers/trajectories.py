@@ -21,6 +21,7 @@ from app.utils.auth import verify_basic_auth
 router = APIRouter(prefix="/trajectories", tags=["trajectories"])
 
 DATA_DIR = Path(settings.TRAJ_FILES_DIR)
+SESSIONS_DIR = Path(settings.SESSIONS_DIR)
 
 # 允许排序的字段
 SORTABLE_FIELDS = {
@@ -170,6 +171,42 @@ async def get_raw_file(session_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
+@router.get("/{session_id}/detail/raw-data", dependencies=[Depends(verify_basic_auth)])
+async def get_raw_data(session_id: str, db: AsyncSession = Depends(get_db)):
+    """返回 raw.jsonl 原始采集数据"""
+    await _get_traj_or_404(session_id, db)
+    raw_path = _get_session_file(session_id, "raw.jsonl")
+    if not raw_path:
+        raise HTTPException(status_code=404, detail="raw.jsonl not found")
+
+    lines = []
+    for line in raw_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            try:
+                lines.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return {"session_id": session_id, "total": len(lines), "items": lines}
+
+
+@router.get("/{session_id}/detail/events", dependencies=[Depends(verify_basic_auth)])
+async def get_events(session_id: str, db: AsyncSession = Depends(get_db)):
+    """返回 events.jsonl hook 事件数据"""
+    await _get_traj_or_404(session_id, db)
+    events_path = _get_session_file(session_id, "events.jsonl")
+    if not events_path:
+        raise HTTPException(status_code=404, detail="events.jsonl not found")
+
+    events = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return {"session_id": session_id, "total": len(events), "items": events}
+
+
 @router.patch("/{session_id}", dependencies=[Depends(verify_basic_auth)])
 async def update_trajectory(
     session_id: str,
@@ -200,13 +237,22 @@ async def update_trajectory(
 
 @router.delete("/{session_id}", dependencies=[Depends(verify_basic_auth)])
 async def delete_trajectory(session_id: str, db: AsyncSession = Depends(get_db)):
-    """删除轨迹（数据库记录 + 磁盘文件）"""
+    """删除轨迹（数据库记录 + 磁盘文件，包括整个 session 目录）"""
     traj = await _get_traj_or_404(session_id, db)
 
-    # 删除磁盘文件
-    traj_path = _get_traj_file_path(traj)
-    if traj_path.exists():
-        traj_path.unlink()
+    # 删除磁盘文件：优先删除整个 session 目录
+    import shutil
+    session_dir = Path(settings.SESSIONS_DIR) / session_id
+    if session_dir.is_dir():
+        shutil.rmtree(session_dir, ignore_errors=True)
+    else:
+        # 旧布局：只删 traj 文件
+        try:
+            traj_path = _get_traj_file_path(traj)
+            if traj_path.exists():
+                traj_path.unlink()
+        except HTTPException:
+            pass
 
     await db.delete(traj)
     await db.commit()
@@ -224,12 +270,25 @@ async def _get_traj_or_404(session_id: str, db: AsyncSession) -> Trajectory:
 
 
 def _get_traj_file_path(traj: Trajectory) -> Path:
-    """从 traj_file_path 字段获取磁盘路径"""
+    """从 traj_file_path 字段获取磁盘路径，兼容新旧两种布局"""
     # traj_file_path 存的是相对于 data/ 的路径
-    path = Path(settings.TRAJ_FILES_DIR).parent / traj.traj_file_path
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="traj file not found on disk")
-    return path
+    # 新布局: sessions/{session_id}/session.traj
+    # 旧布局: traj_files/{tool_source}/{session_id}.traj
+    data_root = Path(settings.TRAJ_FILES_DIR).parent
+    path = data_root / traj.traj_file_path
+    if path.exists():
+        return path
+    # 兼容：如果 DB 里是旧路径但文件已迁移到新布局
+    new_path = Path(settings.SESSIONS_DIR) / traj.session_id / "session.traj"
+    if new_path.exists():
+        return new_path
+    raise HTTPException(status_code=404, detail="traj file not found on disk")
+
+
+def _get_session_file(session_id: str, filename: str):
+    """获取 session 目录下的文件路径，不存在返回 None"""
+    path = Path(settings.SESSIONS_DIR) / session_id / filename
+    return path if path.exists() else None
 
 
 def _parse_json_field(value: str) -> list:

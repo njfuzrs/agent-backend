@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # 文件存储
     TRAJ_FILES_DIR: str = str(PROJECT_ROOT / "data" / "traj_files")
+    SESSIONS_DIR: str = str(PROJECT_ROOT / "data" / "sessions")
 
     # 认证
     AUTH_USERNAME: str = "admin"

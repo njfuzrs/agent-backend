@@ -13,11 +13,10 @@ trajectory-platform 是 Agent 轨迹数据存储分析平台，用于云端存�
 本平台的数据来源于 [claude-trace](../claude-trace/) 采集工具，位于 `~/Code/person/claude-trace/`。
 
 - 采集工具路径：`~/Code/person/claude-trace/`
-- 本地轨迹数据：`~/Code/person/claude-trace/trajectories/`
-  - 原始数据：`trajectories/raw/{session_id}.jsonl`
-  - 构建产物：`trajectories/traj/{session_id}.traj`（sync.py 上传的就是这些文件）
+- 本地轨迹数据：`~/Code/person/claude-trace/trajectories/sessions/`
+  - 按会话维度存储：`sessions/{session_id}/session.traj`、`raw.jsonl`、`events.jsonl`、`raw/`
 - 采集方式：HTTP 代理（proxy.py）+ Claude Hooks（collector.py）双通道
-- 数据流向：`claude-trace 采集 → .traj 文件 → sync.py 上传 → trajectory-platform 云端存储`
+- 数据流向：`claude-trace 采集 → sessions/{sid}/ → 会话结束自动上传 / sync.py 批量同步 → trajectory-platform 云端存储`
 
 ## 技术栈
 
