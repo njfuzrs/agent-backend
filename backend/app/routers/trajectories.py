@@ -1,7 +1,8 @@
 """轨迹 CRUD + 搜索 + 详情分段加载 API"""
 
+import gzip
 import json
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,19 +10,16 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, desc, asc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database import get_db
 from app.models import Trajectory
 from app.schemas import (
     TrajectoryListResponse, TrajectoryListItem, TrajectoryMeta,
     TrajectoryStepsResponse, TrajectoryUpdate,
 )
+from app.services.storage import storage
 from app.utils.auth import verify_basic_auth
 
 router = APIRouter(prefix="/trajectories", tags=["trajectories"])
-
-DATA_DIR = Path(settings.TRAJ_FILES_DIR)
-SESSIONS_DIR = Path(settings.SESSIONS_DIR)
 
 # 允许排序的字段
 SORTABLE_FIELDS = {
@@ -56,8 +54,9 @@ async def list_trajectories(
     query = select(Trajectory)
     count_query = select(func.count(Trajectory.id))
 
-    # 过滤条件
-    filters = []
+    # 软删除过滤：只返回未删除的记录
+    filters = [Trajectory.deleted_at.is_(None)]
+
     if tool_source:
         filters.append(Trajectory.tool_source == tool_source)
     if model:
@@ -122,9 +121,9 @@ async def get_trajectory_steps(
 ):
     """分页返回 trajectory 数组"""
     traj = await _get_traj_or_404(session_id, db)
-    traj_path = _get_traj_file_path(traj)
+    content = _read_traj_content(traj)
 
-    traj_data = json.loads(traj_path.read_bytes())
+    traj_data = json.loads(content)
     all_steps = traj_data.get("trajectory", [])
     total = len(all_steps)
     items = all_steps[offset:offset + limit]
@@ -134,22 +133,21 @@ async def get_trajectory_steps(
 
 @router.get("/{session_id}/detail/history", dependencies=[Depends(verify_basic_auth)])
 async def get_trajectory_history(session_id: str, db: AsyncSession = Depends(get_db)):
-    """流式返回 history 数组"""
+    """返回 history 数组"""
     traj = await _get_traj_or_404(session_id, db)
-    traj_path = _get_traj_file_path(traj)
+    content = _read_traj_content(traj)
 
-    traj_data = json.loads(traj_path.read_bytes())
-    history = traj_data.get("history", [])
-    return history
+    traj_data = json.loads(content)
+    return traj_data.get("history", [])
 
 
 @router.get("/{session_id}/detail/info", dependencies=[Depends(verify_basic_auth)])
 async def get_trajectory_info(session_id: str, db: AsyncSession = Depends(get_db)):
     """返回 info 字段"""
     traj = await _get_traj_or_404(session_id, db)
-    traj_path = _get_traj_file_path(traj)
+    content = _read_traj_content(traj)
 
-    traj_data = json.loads(traj_path.read_bytes())
+    traj_data = json.loads(content)
     return traj_data.get("info", {})
 
 
@@ -157,15 +155,10 @@ async def get_trajectory_info(session_id: str, db: AsyncSession = Depends(get_db
 async def get_raw_file(session_id: str, db: AsyncSession = Depends(get_db)):
     """下载原始 .traj 文件"""
     traj = await _get_traj_or_404(session_id, db)
-    traj_path = _get_traj_file_path(traj)
-
-    def iterfile():
-        with open(traj_path, "rb") as f:
-            while chunk := f.read(64 * 1024):
-                yield chunk
+    content = _read_traj_content(traj)
 
     return StreamingResponse(
-        iterfile(),
+        iter([content]),
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={session_id}.traj"},
     )
@@ -175,12 +168,12 @@ async def get_raw_file(session_id: str, db: AsyncSession = Depends(get_db)):
 async def get_raw_data(session_id: str, db: AsyncSession = Depends(get_db)):
     """返回 raw.jsonl 原始采集数据"""
     await _get_traj_or_404(session_id, db)
-    raw_path = _get_session_file(session_id, "raw.jsonl")
-    if not raw_path:
+    content = _read_session_file(session_id, "raw.jsonl")
+    if content is None:
         raise HTTPException(status_code=404, detail="raw.jsonl not found")
 
     lines = []
-    for line in raw_path.read_text(encoding="utf-8").splitlines():
+    for line in content.decode("utf-8").splitlines():
         if line.strip():
             try:
                 lines.append(json.loads(line))
@@ -193,12 +186,12 @@ async def get_raw_data(session_id: str, db: AsyncSession = Depends(get_db)):
 async def get_events(session_id: str, db: AsyncSession = Depends(get_db)):
     """返回 events.jsonl hook 事件数据"""
     await _get_traj_or_404(session_id, db)
-    events_path = _get_session_file(session_id, "events.jsonl")
-    if not events_path:
+    content = _read_session_file(session_id, "events.jsonl")
+    if content is None:
         raise HTTPException(status_code=404, detail="events.jsonl not found")
 
     events = []
-    for line in events_path.read_text(encoding="utf-8").splitlines():
+    for line in content.decode("utf-8").splitlines():
         if line.strip():
             try:
                 events.append(json.loads(line))
@@ -216,7 +209,6 @@ async def update_trajectory(
     """更新轨迹标注（评分/标签/任务类型）"""
     traj = await _get_traj_or_404(session_id, db)
 
-    from datetime import datetime, timezone
     if update.quality_rating is not None:
         traj.quality_rating = update.quality_rating
     if update.quality_status is not None:
@@ -237,58 +229,68 @@ async def update_trajectory(
 
 @router.delete("/{session_id}", dependencies=[Depends(verify_basic_auth)])
 async def delete_trajectory(session_id: str, db: AsyncSession = Depends(get_db)):
-    """删除轨迹（数据库记录 + 磁盘文件，包括整个 session 目录）"""
+    """软删除轨迹（设置 deleted_at，不删除文件）
+
+    文件由定时任务 cleanup_deleted.sh 在 30 天后真正清理。
+    """
     traj = await _get_traj_or_404(session_id, db)
 
-    # 删除磁盘文件：优先删除整个 session 目录
-    import shutil
-    session_dir = Path(settings.SESSIONS_DIR) / session_id
-    if session_dir.is_dir():
-        shutil.rmtree(session_dir, ignore_errors=True)
-    else:
-        # 旧布局：只删 traj 文件
-        try:
-            traj_path = _get_traj_file_path(traj)
-            if traj_path.exists():
-                traj_path.unlink()
-        except HTTPException:
-            pass
-
-    await db.delete(traj)
+    traj.deleted_at = datetime.now(timezone.utc).isoformat()
     await db.commit()
-    return {"status": "deleted", "session_id": session_id}
+    return {"status": "soft_deleted", "session_id": session_id, "recoverable_until": "30天"}
 
 
 # ── 内部工具函数 ──
 
 async def _get_traj_or_404(session_id: str, db: AsyncSession) -> Trajectory:
-    result = await db.execute(select(Trajectory).where(Trajectory.session_id == session_id))
+    """获取未删除的轨迹记录，不存在则 404"""
+    result = await db.execute(
+        select(Trajectory)
+        .where(Trajectory.session_id == session_id)
+        .where(Trajectory.deleted_at.is_(None))
+    )
     traj = result.scalar_one_or_none()
     if not traj:
         raise HTTPException(status_code=404, detail="trajectory not found")
     return traj
 
 
-def _get_traj_file_path(traj: Trajectory) -> Path:
-    """从 traj_file_path 字段获取磁盘路径，兼容新旧两种布局"""
-    # traj_file_path 存的是相对于 data/ 的路径
-    # 新布局: sessions/{session_id}/session.traj
-    # 旧布局: traj_files/{tool_source}/{session_id}.traj
-    data_root = Path(settings.TRAJ_FILES_DIR).parent
-    path = data_root / traj.traj_file_path
-    if path.exists():
-        return path
-    # 兼容：如果 DB 里是旧路径但文件已迁移到新布局
-    new_path = Path(settings.SESSIONS_DIR) / traj.session_id / "session.traj"
-    if new_path.exists():
-        return new_path
-    raise HTTPException(status_code=404, detail="traj file not found on disk")
+def _read_traj_content(traj: Trajectory) -> bytes:
+    """读取 traj 文件内容，自动处理压缩和非压缩格式"""
+    # 优先使用 oss_key，其次 traj_file_path
+    key = traj.oss_key or traj.traj_file_path
+    try:
+        content = storage.get(key)
+        if key.endswith(".gz"):
+            content = gzip.decompress(content)
+        return content
+    except FileNotFoundError:
+        pass
+
+    # 兼容：尝试不带 .gz 后缀（旧数据）
+    fallback_key = f"sessions/{traj.session_id}/session.traj"
+    try:
+        return storage.get(fallback_key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="traj file not found")
 
 
-def _get_session_file(session_id: str, filename: str):
-    """获取 session 目录下的文件路径，不存在返回 None"""
-    path = Path(settings.SESSIONS_DIR) / session_id / filename
-    return path if path.exists() else None
+def _read_session_file(session_id: str, filename: str) -> Optional[bytes]:
+    """读取 session 目录下的文件，自动尝试 .gz 和非 .gz 格式"""
+    # 先尝试压缩版本
+    gz_key = f"sessions/{session_id}/{filename}.gz"
+    try:
+        content = storage.get(gz_key)
+        return gzip.decompress(content)
+    except FileNotFoundError:
+        pass
+
+    # 再尝试非压缩版本
+    key = f"sessions/{session_id}/{filename}"
+    try:
+        return storage.get(key)
+    except FileNotFoundError:
+        return None
 
 
 def _parse_json_field(value: str) -> list:

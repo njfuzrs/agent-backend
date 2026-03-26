@@ -60,6 +60,18 @@ class Trajectory(Base):
     traj_file_path = Column(Text, nullable=False)
     traj_file_size = Column(Integer, default=0)
 
+    # OSS 存储
+    oss_key = Column(Text, nullable=True)           # OSS 存储路径，如 sessions/{sid}/session.traj.gz
+    sha256 = Column(Text, nullable=True)            # 上传文件的 SHA256
+    file_size = Column(Integer, nullable=True)      # 压缩后文件大小（字节）
+
+    # 多用户标识
+    user_id = Column(Text, nullable=True)           # 上传用户标识
+    device_id = Column(Text, nullable=True)         # 上传设备标识
+
+    # 软删除
+    deleted_at = Column(Text, nullable=True)        # ISO8601 时间戳，NULL 表示未删除
+
     # 时间戳
     uploaded_at = Column(Text, nullable=False)
     updated_at = Column(Text, nullable=False)
@@ -72,6 +84,9 @@ class Trajectory(Base):
         Index("idx_traj_quality_status", "quality_status"),
         Index("idx_traj_exit_status", "exit_status"),
         Index("idx_traj_project_name", "project_name"),
+        Index("idx_traj_user_id", "user_id"),
+        Index("idx_traj_device_id", "device_id"),
+        Index("idx_traj_deleted_at", "deleted_at"),
     )
 
 

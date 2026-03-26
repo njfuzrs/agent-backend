@@ -60,8 +60,10 @@ class TrajectoryStepsResponse(BaseModel):
 # ── 上传响应 ──
 class UploadResponse(BaseModel):
     session_id: str
-    status: str  # created / updated
+    status: str  # created / updated / exists / skipped
     metadata: dict = {}
+    sha256: str = ""     # 回传给客户端用于二次校验
+    oss_key: str = ""    # 存储路径（本地模式为空）
 
 
 # ── 更新标注 ──

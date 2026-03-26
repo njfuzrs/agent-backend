@@ -1,10 +1,12 @@
 """上传 API：单个/批量上传 .traj 文件，会话维度上传"""
 
+import gzip
 import json
 import uuid
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +15,11 @@ from app.database import get_db
 from app.models import Trajectory
 from app.schemas import UploadResponse
 from app.services.traj_parser import parse_traj_content
+from app.services.storage import storage, compute_sha256
 from app.utils.auth import verify_upload_token
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-DATA_DIR = Path(settings.TRAJ_FILES_DIR)
 SESSIONS_DIR = Path(settings.SESSIONS_DIR)
 
 # 会话维度上传：file_type → 磁盘文件名
@@ -35,39 +37,70 @@ async def upload_session_file(
     file_type: str = Form(...),
     tool_source: str = Form("claude-code"),
     force: bool = Query(False),
+    compressed: bool = Form(False),
+    user_id: Optional[str] = Form(None),
+    device_id: Optional[str] = Form(None),
+    x_content_sha256: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """会话维度上传：按 session_id + file_type 存储到 sessions/{session_id}/
+    """会话维度上传：按 session_id + file_type 存储
 
     file_type: traj | raw | events
-    - traj: 解析元数据写入 DB + 存储 session.traj
+    - traj: 解析元数据写入 DB + 存储文件
     - raw/events: 仅存储文件，不写 DB
+
+    新增参数（均可选，向后兼容）：
+    - compressed: 客户端是否已 gzip 压缩
+    - user_id / device_id: 上传来源标识
+    - x_content_sha256: 客户端计算的 SHA256，用于传输校验
     """
     if file_type not in _FILE_TYPE_MAP:
         raise HTTPException(status_code=400, detail=f"无效的 file_type: {file_type}，允许: {list(_FILE_TYPE_MAP.keys())}")
 
     content = await file.read()
+
+    # SHA256 校验
+    server_hash = compute_sha256(content)
+    if x_content_sha256 and server_hash != x_content_sha256:
+        raise HTTPException(status_code=400, detail={
+            "error": "hash_mismatch",
+            "expected": x_content_sha256,
+            "actual": server_hash,
+        })
+
+    # 确定存储 key
     filename = _FILE_TYPE_MAP[file_type]
-    dest = SESSIONS_DIR / session_id / filename
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    if compressed:
+        storage_key = f"sessions/{session_id}/{filename}.gz"
+    else:
+        storage_key = f"sessions/{session_id}/{filename}"
 
     # 去重：文件已存在则跳过（除非 force）
-    if dest.exists() and not force:
+    if storage.exists(storage_key) and not force:
         if file_type == "traj":
-            raise HTTPException(status_code=409, detail="trajectory already exists", headers={"X-Session-Id": session_id})
-        return {"session_id": session_id, "file_type": file_type, "status": "skipped", "reason": "already exists"}
+            raise HTTPException(status_code=409, detail="trajectory already exists",
+                                headers={"X-Session-Id": session_id})
+        return {"session_id": session_id, "file_type": file_type, "status": "skipped",
+                "reason": "already exists", "sha256": server_hash}
 
-    dest.write_bytes(content)
+    # 存储文件
+    storage.put(storage_key, content)
 
     # traj 类型需要解析元数据并写入/更新 DB
     if file_type == "traj":
         try:
-            parsed = parse_traj_content(content, tool_source)
+            raw_content = gzip.decompress(content) if compressed else content
+            parsed = parse_traj_content(raw_content, tool_source)
         except (json.JSONDecodeError, KeyError) as e:
             raise HTTPException(status_code=400, detail=f"无效的 .traj 文件: {e}")
 
         parsed["session_id"] = session_id
-        parsed["traj_file_path"] = str(dest.relative_to(SESSIONS_DIR.parent))
+        parsed["traj_file_path"] = storage_key
+        parsed["oss_key"] = storage_key if settings.is_oss else None
+        parsed["sha256"] = server_hash
+        parsed["file_size"] = len(content)
+        parsed["user_id"] = user_id
+        parsed["device_id"] = device_id
 
         result = await db.execute(select(Trajectory).where(Trajectory.session_id == session_id))
         existing = result.scalar_one_or_none()
@@ -77,14 +110,17 @@ async def upload_session_file(
                 if key != "session_id":
                     setattr(existing, key, value)
             await db.commit()
-            return UploadResponse(session_id=session_id, status="updated", metadata=_summary(parsed))
+            return UploadResponse(session_id=session_id, status="updated",
+                                  metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
         db.add(Trajectory(**parsed))
         await db.commit()
-        return UploadResponse(session_id=session_id, status="created", metadata=_summary(parsed))
+        return UploadResponse(session_id=session_id, status="created",
+                              metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
     # raw / events 类型：仅存储文件
-    return {"session_id": session_id, "file_type": file_type, "status": "saved", "size": len(content)}
+    return {"session_id": session_id, "file_type": file_type, "status": "saved",
+            "size": len(content), "sha256": server_hash, "oss_key": storage_key}
 
 
 @router.post("/traj", response_model=UploadResponse, dependencies=[Depends(verify_upload_token)])
@@ -121,12 +157,15 @@ async def upload_traj(
             headers={"X-Session-Id": session_id},
         )
 
-    # 存储到新的 sessions/ 布局
-    dest = SESSIONS_DIR / session_id / "session.traj"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(content)
+    # 存储文件
+    storage_key = f"sessions/{session_id}/session.traj"
+    storage.put(storage_key, content)
 
-    parsed["traj_file_path"] = str(dest.relative_to(SESSIONS_DIR.parent))
+    server_hash = compute_sha256(content)
+    parsed["traj_file_path"] = storage_key
+    parsed["oss_key"] = storage_key if settings.is_oss else None
+    parsed["sha256"] = server_hash
+    parsed["file_size"] = len(content)
 
     # 覆盖 project_name 和 tags（如果上传时指定了）
     if project_name:
@@ -135,18 +174,18 @@ async def upload_traj(
         parsed["tags"] = json.dumps([t.strip() for t in tags.split(",") if t.strip()])
 
     if existing and force:
-        # 更新已有记录
         for key, value in parsed.items():
             if key != "session_id":
                 setattr(existing, key, value)
         await db.commit()
-        return UploadResponse(session_id=session_id, status="updated", metadata=_summary(parsed))
+        return UploadResponse(session_id=session_id, status="updated",
+                              metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
-    # 新建记录
     record = Trajectory(**parsed)
     db.add(record)
     await db.commit()
-    return UploadResponse(session_id=session_id, status="created", metadata=_summary(parsed))
+    return UploadResponse(session_id=session_id, status="created",
+                          metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
 
 @router.post("/batch", dependencies=[Depends(verify_upload_token)])
@@ -172,10 +211,14 @@ async def upload_batch(
                 results.append({"session_id": session_id, "status": "skipped", "reason": "already exists"})
                 continue
 
-            dest = SESSIONS_DIR / session_id / "session.traj"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(content)
-            parsed["traj_file_path"] = str(dest.relative_to(SESSIONS_DIR.parent))
+            storage_key = f"sessions/{session_id}/session.traj"
+            storage.put(storage_key, content)
+
+            server_hash = compute_sha256(content)
+            parsed["traj_file_path"] = storage_key
+            parsed["oss_key"] = storage_key if settings.is_oss else None
+            parsed["sha256"] = server_hash
+            parsed["file_size"] = len(content)
 
             if existing and force:
                 for key, value in parsed.items():
@@ -195,7 +238,14 @@ async def upload_batch(
 
 @router.post("/reindex", dependencies=[Depends(verify_upload_token)])
 async def reindex(db: AsyncSession = Depends(get_db)):
-    """扫描 sessions/ 和 traj_files/ 目录，将未入库的 .traj 文件解析并写入 SQLite"""
+    """扫描本地 sessions/ 和 traj_files/ 目录，将未入库的 .traj 文件解析并写入数据库
+
+    注意：OSS 模式下不支持 reindex（数据在上传时已入库），仅本地模式可用。
+    """
+    if settings.is_oss:
+        return {"message": "OSS 模式下不需要 reindex，数据在上传时已入库"}
+
+    DATA_DIR = Path(settings.TRAJ_FILES_DIR)
     scanned = 0
     new = 0
     errors = 0
