@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## 强制约束
+
+所有对话和回答必须使用中文
+
 ## 项目概述
 
 trajectory-platform 是 Agent 轨迹数据存储分析平台，用于云端存储、浏览、搜索、标注 Claude Code 等工具的 .traj 轨迹数据。
