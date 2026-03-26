@@ -59,6 +59,11 @@ async def upload_session_file(
 
     content = await file.read()
 
+    # 自动检测 gzip：0x1f8b 是 gzip magic number
+    is_gzip = len(content) >= 2 and content[0] == 0x1f and content[1] == 0x8b
+    if is_gzip:
+        compressed = True
+
     # SHA256 校验
     server_hash = compute_sha256(content)
     if x_content_sha256 and server_hash != x_content_sha256:
