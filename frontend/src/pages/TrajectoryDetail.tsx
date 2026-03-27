@@ -18,10 +18,10 @@ import TagManager from '../components/TagManager'
 import Timeline from '../components/Timeline'
 import {
   apiBasePath,
+  fetchAllTrajectorySteps,
   fetchTrajectoryHistory,
   fetchTrajectoryInfo,
   fetchTrajectoryMeta,
-  fetchTrajectorySteps,
 } from '../services/api'
 import type { TrajectoryMeta } from '../types/trajectory'
 import { formatCurrency, formatDuration, formatTokens } from '../utils/format'
@@ -47,7 +47,7 @@ export default function TrajectoryDetail() {
 
   const { data: steps, isLoading: stepsLoading } = useQuery({
     queryKey: ['trajectory-steps', sessionId],
-    queryFn: () => fetchTrajectorySteps(sessionId!, 0, 400),
+    queryFn: () => fetchAllTrajectorySteps(sessionId!),
     enabled: !!sessionId && activeTab === 'timeline',
   })
 

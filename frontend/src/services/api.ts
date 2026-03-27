@@ -26,6 +26,8 @@ const api = axios.create({
   },
 })
 
+const TRAJECTORY_STEPS_BATCH_SIZE = 200
+
 // 登录后更新 auth
 export function setAuth(username: string, password: string) {
   localStorage.setItem('auth_user', username)
@@ -60,6 +62,36 @@ export async function fetchTrajectorySteps(
     params: { offset, limit },
   })
   return data
+}
+
+/** 轨迹步骤（自动分批拉取全部，避免单次请求过大） */
+export async function fetchAllTrajectorySteps(sessionId: string): Promise<TrajectoryStepsResponse> {
+  const firstPage = await fetchTrajectorySteps(sessionId, 0, TRAJECTORY_STEPS_BATCH_SIZE)
+  if (firstPage.total <= firstPage.items.length) {
+    return firstPage
+  }
+
+  const requests: Array<Promise<TrajectoryStepsResponse>> = []
+  for (let offset = firstPage.items.length; offset < firstPage.total; offset += TRAJECTORY_STEPS_BATCH_SIZE) {
+    requests.push(
+      fetchTrajectorySteps(
+        sessionId,
+        offset,
+        Math.min(TRAJECTORY_STEPS_BATCH_SIZE, firstPage.total - offset)
+      )
+    )
+  }
+
+  const restPages = await Promise.all(requests)
+  return {
+    total: firstPage.total,
+    offset: 0,
+    limit: firstPage.total,
+    items: [
+      ...firstPage.items,
+      ...restPages.flatMap(page => page.items),
+    ],
+  }
 }
 
 /** 轨迹 history */

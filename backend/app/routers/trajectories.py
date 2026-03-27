@@ -29,6 +29,7 @@ router = APIRouter(prefix="/trajectories", tags=["trajectories"])
 
 ALLOWED_QUALITY_STATUS = {"unreviewed", "approved", "rejected"}
 ALLOWED_TASK_TYPES = {"", "bug_fix", "feature", "refactor", "explain", "other"}
+MAX_TRAJECTORY_STEP_PAGE_SIZE = 500
 
 # 允许排序的字段
 SORTABLE_FIELDS = {
@@ -147,10 +148,13 @@ async def get_trajectory(session_id: str, db: AsyncSession = Depends(get_db)):
 async def get_trajectory_steps(
     session_id: str,
     offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_TRAJECTORY_STEP_PAGE_SIZE),
     db: AsyncSession = Depends(get_db),
 ):
-    """分页返回 trajectory 数组"""
+    """分页返回 trajectory 数组。
+
+    单次响应仍保留上限，避免大 session 一次性返回过多步骤导致响应过大。
+    """
     traj = await _get_traj_or_404(session_id, db)
     content = _read_traj_content(traj)
 
