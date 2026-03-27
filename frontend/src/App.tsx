@@ -5,7 +5,8 @@ import {
   UnorderedListOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import Dashboard from './pages/Dashboard'
 import TrajectoryList from './pages/TrajectoryList'
 import TrajectoryDetail from './pages/TrajectoryDetail'
 import { setAuth, hasAuth } from './services/api'
@@ -17,10 +18,6 @@ function App() {
   const location = useLocation()
   const [loginOpen, setLoginOpen] = useState(!hasAuth())
   const [form] = Form.useForm()
-
-  useEffect(() => {
-    if (!hasAuth()) setLoginOpen(true)
-  }, [])
 
   const handleLogin = async () => {
     const values = await form.validateFields()
@@ -53,7 +50,7 @@ function App() {
       </Header>
       <Content style={{ padding: '24px', background: '#141414' }}>
         <Routes>
-          <Route path="/" element={<TrajectoryList />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/trajectories" element={<TrajectoryList />} />
           <Route path="/trajectories/:sessionId" element={<TrajectoryDetail />} />
           <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />

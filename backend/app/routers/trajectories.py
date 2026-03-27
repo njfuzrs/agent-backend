@@ -13,13 +13,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Trajectory
 from app.schemas import (
-    TrajectoryListResponse, TrajectoryListItem, TrajectoryMeta,
-    TrajectoryStepsResponse, TrajectoryUpdate,
+    TrajectoryBatchUpdate,
+    TrajectoryBatchUpdateResponse,
+    TrajectoryListItem,
+    TrajectoryListResponse,
+    TrajectoryMeta,
+    TrajectoryStepsResponse,
+    TrajectoryUpdate,
 )
+from app.services.stats_service import build_trajectory_filters
 from app.services.storage import storage
 from app.utils.auth import verify_basic_auth
 
 router = APIRouter(prefix="/trajectories", tags=["trajectories"])
+
+ALLOWED_QUALITY_STATUS = {"unreviewed", "approved", "rejected"}
+ALLOWED_TASK_TYPES = {"", "bug_fix", "feature", "refactor", "explain", "other"}
 
 # 允许排序的字段
 SORTABLE_FIELDS = {
@@ -54,27 +63,17 @@ async def list_trajectories(
     query = select(Trajectory)
     count_query = select(func.count(Trajectory.id))
 
-    # 软删除过滤：只返回未删除的记录
-    filters = [Trajectory.deleted_at.is_(None)]
-
-    if tool_source:
-        filters.append(Trajectory.tool_source == tool_source)
-    if model:
-        filters.append(Trajectory.model == model)
-    if exit_status:
-        filters.append(Trajectory.exit_status == exit_status)
-    if task_type:
-        filters.append(Trajectory.task_type == task_type)
-    if quality_status:
-        filters.append(Trajectory.quality_status == quality_status)
-    if project_name:
-        filters.append(Trajectory.project_name == project_name)
-    if search:
-        filters.append(Trajectory.first_prompt.contains(search))
-    if start_date:
-        filters.append(Trajectory.start_time >= start_date)
-    if end_date:
-        filters.append(Trajectory.start_time <= end_date)
+    filters = build_trajectory_filters(
+        tool_source=tool_source,
+        model=model,
+        exit_status=exit_status,
+        task_type=task_type,
+        quality_status=quality_status,
+        project_name=project_name,
+        search=search,
+        start_date=start_date,
+        end_date=end_date,
+    )
     if min_steps is not None:
         filters.append(Trajectory.total_steps >= min_steps)
     if max_steps is not None:
@@ -103,6 +102,38 @@ async def list_trajectories(
 
     items = [_to_list_item(r) for r in rows]
     return TrajectoryListResponse(total=total, page=page, page_size=page_size, items=items)
+
+
+@router.patch("/batch", response_model=TrajectoryBatchUpdateResponse, dependencies=[Depends(verify_basic_auth)])
+async def batch_update_trajectories(
+    update: TrajectoryBatchUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """批量更新轨迹标注。"""
+    _validate_update(update)
+
+    result = await db.execute(
+        select(Trajectory)
+        .where(Trajectory.session_id.in_(update.session_ids))
+        .where(Trajectory.deleted_at.is_(None))
+    )
+    rows = list(result.scalars().all())
+    if not rows:
+        raise HTTPException(status_code=404, detail="no trajectories found")
+
+    updated_at = datetime.now(timezone.utc).isoformat()
+    updated_ids: list[str] = []
+    for row in rows:
+        changed = _apply_update(row, update)
+        if changed:
+            row.updated_at = updated_at
+        updated_ids.append(row.session_id)
+
+    await db.commit()
+    return TrajectoryBatchUpdateResponse(
+        updated_count=len(updated_ids),
+        session_ids=updated_ids,
+    )
 
 
 @router.get("/{session_id}", response_model=TrajectoryMeta, dependencies=[Depends(verify_basic_auth)])
@@ -208,19 +239,9 @@ async def update_trajectory(
 ):
     """更新轨迹标注（评分/标签/任务类型）"""
     traj = await _get_traj_or_404(session_id, db)
+    _validate_update(update)
 
-    if update.quality_rating is not None:
-        traj.quality_rating = update.quality_rating
-    if update.quality_status is not None:
-        traj.quality_status = update.quality_status
-    if update.quality_notes is not None:
-        traj.quality_notes = update.quality_notes
-    if update.task_type is not None:
-        traj.task_type = update.task_type
-    if update.project_name is not None:
-        traj.project_name = update.project_name
-    if update.tags is not None:
-        traj.tags = json.dumps(update.tags)
+    _apply_update(traj, update)
 
     traj.updated_at = datetime.now(timezone.utc).isoformat()
     await db.commit()
@@ -302,6 +323,53 @@ def _parse_json_field(value: str) -> list:
         return result if isinstance(result, list) else []
     except (json.JSONDecodeError, TypeError):
         return []
+
+
+def _validate_update(update: TrajectoryUpdate | TrajectoryBatchUpdate) -> None:
+    if update.quality_status is not None and update.quality_status not in ALLOWED_QUALITY_STATUS:
+        raise HTTPException(status_code=400, detail="invalid quality_status")
+    if update.task_type is not None and update.task_type not in ALLOWED_TASK_TYPES:
+        raise HTTPException(status_code=400, detail="invalid task_type")
+
+    if not any(
+        getattr(update, field_name) is not None
+        for field_name in (
+            "quality_rating",
+            "quality_status",
+            "quality_notes",
+            "task_type",
+            "project_name",
+            "tags",
+        )
+    ):
+        raise HTTPException(status_code=400, detail="no update fields provided")
+
+
+def _apply_update(traj: Trajectory, update: TrajectoryUpdate | TrajectoryBatchUpdate) -> bool:
+    changed = False
+
+    if update.quality_rating is not None and traj.quality_rating != update.quality_rating:
+        traj.quality_rating = update.quality_rating
+        changed = True
+    if update.quality_status is not None and traj.quality_status != update.quality_status:
+        traj.quality_status = update.quality_status
+        changed = True
+    if update.quality_notes is not None and traj.quality_notes != update.quality_notes:
+        traj.quality_notes = update.quality_notes
+        changed = True
+    if update.task_type is not None and traj.task_type != update.task_type:
+        traj.task_type = update.task_type
+        changed = True
+    if update.project_name is not None and traj.project_name != update.project_name:
+        traj.project_name = update.project_name
+        changed = True
+    if update.tags is not None:
+        tags_value = json.dumps(update.tags)
+        if traj.tags != tags_value:
+            traj.tags = tags_value
+            changed = True
+
+    return changed
 
 
 def _to_list_item(r: Trajectory) -> TrajectoryListItem:

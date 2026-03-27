@@ -1,31 +1,30 @@
 import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Card, Descriptions, Tag, Space, Button, Tabs, Spin, Typography, Rate, Select,
-  message,
+  Button,
+  Card,
+  Descriptions,
+  Space,
+  Spin,
+  Tabs,
+  Tag,
+  Typography,
 } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
-import {
-  fetchTrajectoryMeta, fetchTrajectorySteps, fetchTrajectoryInfo,
-  updateTrajectory,
-} from '../services/api'
-import Timeline from '../components/Timeline'
-import type { TrajectoryMeta } from '../types/trajectory'
 import dayjs from 'dayjs'
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
-  return String(n)
-}
-
-function formatDuration(ms: number | null): string {
-  if (!ms) return '-'
-  const s = Math.round(ms / 1000)
-  if (s < 60) return `${s}s`
-  return `${Math.floor(s / 60)}m${s % 60}s`
-}
+import QualityRating from '../components/QualityRating'
+import TagManager from '../components/TagManager'
+import Timeline from '../components/Timeline'
+import {
+  apiBasePath,
+  fetchTrajectoryHistory,
+  fetchTrajectoryInfo,
+  fetchTrajectoryMeta,
+  fetchTrajectorySteps,
+} from '../services/api'
+import type { TrajectoryMeta } from '../types/trajectory'
+import { formatCurrency, formatDuration, formatTokens } from '../utils/format'
 
 const EXIT_STATUS_MAP: Record<string, { color: string; label: string }> = {
   end_turn: { color: 'success', label: '✅ end_turn' },
@@ -37,6 +36,7 @@ const EXIT_STATUS_MAP: Record<string, { color: string; label: string }> = {
 export default function TrajectoryDetail() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState('timeline')
 
   const { data: meta, isLoading: metaLoading } = useQuery({
@@ -47,38 +47,64 @@ export default function TrajectoryDetail() {
 
   const { data: steps, isLoading: stepsLoading } = useQuery({
     queryKey: ['trajectory-steps', sessionId],
-    queryFn: () => fetchTrajectorySteps(sessionId!, 0, 200),
+    queryFn: () => fetchTrajectorySteps(sessionId!, 0, 400),
     enabled: !!sessionId && activeTab === 'timeline',
   })
 
   const { data: info } = useQuery({
     queryKey: ['trajectory-info', sessionId],
     queryFn: () => fetchTrajectoryInfo(sessionId!),
-    enabled: !!sessionId,
+    enabled: !!sessionId && activeTab === 'info',
   })
 
-  if (metaLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />
-  if (!meta) return <div style={{ color: '#fff' }}>轨迹不存在</div>
+  const { data: history, isLoading: historyLoading } = useQuery({
+    queryKey: ['trajectory-history', sessionId],
+    queryFn: () => fetchTrajectoryHistory(sessionId!),
+    enabled: !!sessionId && activeTab === 'history',
+  })
+
+  if (metaLoading) {
+    return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />
+  }
+  if (!meta) {
+    return <div style={{ color: '#fff' }}>轨迹不存在</div>
+  }
+
+  const refreshAnnotations = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['trajectory-meta', sessionId] }),
+      queryClient.invalidateQueries({ queryKey: ['trajectories'] }),
+    ])
+  }
 
   const statusInfo = EXIT_STATUS_MAP[meta.exit_status] || EXIT_STATUS_MAP.unknown
 
   return (
-    <div>
-      <Space style={{ marginBottom: 16 }}>
+    <div style={{ display: 'grid', gap: 16 }}>
+      <Space style={{ marginBottom: 4 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/trajectories')}>
           返回列表
         </Button>
-        <Typography.Text style={{ color: '#999' }}>
-          {meta.session_id}
-        </Typography.Text>
+        <Typography.Text style={{ color: '#999' }}>{meta.session_id}</Typography.Text>
       </Space>
 
       <MetaCard meta={meta} statusInfo={statusInfo} />
 
+      <Card title="质量标注" size="small">
+        <div style={{ display: 'grid', gap: 16 }}>
+          <QualityRating meta={meta} onUpdated={refreshAnnotations} />
+          <div>
+            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+              标签管理
+            </Typography.Text>
+            <TagManager sessionId={meta.session_id} tags={meta.tags} onUpdated={refreshAnnotations} />
+          </div>
+        </div>
+      </Card>
+
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
-        style={{ marginTop: 16 }}
         items={[
           {
             key: 'timeline',
@@ -87,6 +113,19 @@ export default function TrajectoryDetail() {
               <Spin style={{ display: 'block', margin: '40px auto' }} />
             ) : (
               <Timeline steps={steps?.items || []} />
+            ),
+          },
+          {
+            key: 'history',
+            label: 'History',
+            children: historyLoading ? (
+              <Spin style={{ display: 'block', margin: '40px auto' }} />
+            ) : (
+              <Card size="small">
+                <pre style={{ color: '#d4d4d4', overflow: 'auto', maxHeight: 600 }}>
+                  {JSON.stringify(history, null, 2)}
+                </pre>
+              </Card>
             ),
           },
           {
@@ -107,7 +146,7 @@ export default function TrajectoryDetail() {
               <Card size="small">
                 <Button
                   type="primary"
-                  href={`/api/v1/trajectories/${sessionId}/detail/raw`}
+                  href={`${apiBasePath}/trajectories/${sessionId}/detail/raw`}
                   target="_blank"
                 >
                   下载 .traj 文件 ({(meta.traj_file_size / 1024).toFixed(0)} KB)
@@ -121,30 +160,13 @@ export default function TrajectoryDetail() {
   )
 }
 
-function MetaCard({ meta, statusInfo }: { meta: TrajectoryMeta; statusInfo: { color: string; label: string } }) {
-  const [rating, setRating] = useState(meta.quality_rating || 0)
-  const [qualityStatus, setQualityStatus] = useState(meta.quality_status)
-
-  const handleRatingChange = async (value: number) => {
-    setRating(value)
-    try {
-      await updateTrajectory(meta.session_id, { quality_rating: value })
-      message.success('评分已保存')
-    } catch {
-      message.error('保存失败')
-    }
-  }
-
-  const handleStatusChange = async (value: string) => {
-    setQualityStatus(value)
-    try {
-      await updateTrajectory(meta.session_id, { quality_status: value })
-      message.success('状态已保存')
-    } catch {
-      message.error('保存失败')
-    }
-  }
-
+function MetaCard({
+  meta,
+  statusInfo,
+}: {
+  meta: TrajectoryMeta
+  statusInfo: { color: string; label: string }
+}) {
   return (
     <Card size="small">
       <Descriptions column={{ xs: 1, sm: 2, md: 3, lg: 4 }} size="small">
@@ -164,20 +186,22 @@ function MetaCard({ meta, statusInfo }: { meta: TrajectoryMeta; statusInfo: { co
         <Descriptions.Item label="API 调用">{meta.total_api_calls}</Descriptions.Item>
         <Descriptions.Item label="Token">
           {formatTokens(meta.total_tokens)}
-          {meta.tokens_sent > 0 && (
+          {meta.tokens_sent > 0 ? (
             <span style={{ color: '#999', marginLeft: 4 }}>
               (发送 {formatTokens(meta.tokens_sent)} / 接收 {formatTokens(meta.tokens_received)})
             </span>
-          )}
+          ) : null}
         </Descriptions.Item>
-        <Descriptions.Item label="成本">
-          {meta.total_cost_usd > 0 ? `$${meta.total_cost_usd.toFixed(4)}` : '-'}
-        </Descriptions.Item>
+        <Descriptions.Item label="成本">{formatCurrency(meta.total_cost_usd)}</Descriptions.Item>
         <Descriptions.Item label="工具">
           <Space size={2} wrap>
-            {meta.tools_used.map(t => <Tag key={t}>{t}</Tag>)}
+            {meta.tools_used.map(tool => <Tag key={tool}>{tool}</Tag>)}
           </Space>
         </Descriptions.Item>
+        <Descriptions.Item label="任务类型">
+          {meta.task_type ? <Tag color="geekblue">{meta.task_type}</Tag> : '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label="项目名">{meta.project_name || '-'}</Descriptions.Item>
         <Descriptions.Item label="工作目录">
           <Typography.Text code style={{ fontSize: 12 }}>
             {meta.working_directory || '-'}
@@ -190,28 +214,6 @@ function MetaCard({ meta, statusInfo }: { meta: TrajectoryMeta; statusInfo: { co
           {meta.has_sub_agent ? <Tag color="cyan">有</Tag> : <Tag>无</Tag>}
         </Descriptions.Item>
       </Descriptions>
-
-      <div style={{ marginTop: 12, borderTop: '1px solid #303030', paddingTop: 12 }}>
-        <Space size="large">
-          <span>
-            质量评分：<Rate value={rating} onChange={handleRatingChange} />
-          </span>
-          <span>
-            状态：
-            <Select
-              value={qualityStatus}
-              onChange={handleStatusChange}
-              size="small"
-              style={{ width: 120 }}
-              options={[
-                { value: 'unreviewed', label: '未评审' },
-                { value: 'approved', label: '通过' },
-                { value: 'rejected', label: '拒绝' },
-              ]}
-            />
-          </span>
-        </Space>
-      </div>
     </Card>
   )
 }

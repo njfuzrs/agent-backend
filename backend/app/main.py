@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import upload, trajectories
+from app.routers import export, stats, trajectories, upload
 from app.schemas import HealthResponse
 
 
@@ -35,6 +35,8 @@ app.add_middleware(
 # 注册路由
 app.include_router(upload.router, prefix="/api/v1")
 app.include_router(trajectories.router, prefix="/api/v1")
+app.include_router(stats.router, prefix="/api/v1")
+app.include_router(export.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

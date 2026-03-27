@@ -16,6 +16,7 @@ from app.models import Trajectory
 from app.schemas import UploadResponse
 from app.services.traj_parser import parse_traj_content
 from app.services.storage import storage, compute_sha256
+from app.services.tool_steps import sync_tool_steps
 from app.utils.auth import verify_upload_token
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -95,6 +96,7 @@ async def upload_session_file(
     if file_type == "traj":
         try:
             raw_content = gzip.decompress(content) if compressed else content
+            traj_data = json.loads(raw_content)
             parsed = parse_traj_content(raw_content, tool_source)
         except (json.JSONDecodeError, KeyError) as e:
             raise HTTPException(status_code=400, detail=f"无效的 .traj 文件: {e}")
@@ -114,11 +116,16 @@ async def upload_session_file(
             for key, value in parsed.items():
                 if key != "session_id":
                     setattr(existing, key, value)
+            await db.flush()
+            await sync_tool_steps(db, existing, traj_data)
             await db.commit()
             return UploadResponse(session_id=session_id, status="updated",
                                   metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
-        db.add(Trajectory(**parsed))
+        record = Trajectory(**parsed)
+        db.add(record)
+        await db.flush()
+        await sync_tool_steps(db, record, traj_data)
         await db.commit()
         return UploadResponse(session_id=session_id, status="created",
                               metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
@@ -142,6 +149,7 @@ async def upload_traj(
 
     # 解析 .traj
     try:
+        traj_data = json.loads(content)
         parsed = parse_traj_content(content, tool_source)
     except (json.JSONDecodeError, KeyError) as e:
         raise HTTPException(status_code=400, detail=f"无效的 .traj 文件: {e}")
@@ -182,12 +190,16 @@ async def upload_traj(
         for key, value in parsed.items():
             if key != "session_id":
                 setattr(existing, key, value)
+        await db.flush()
+        await sync_tool_steps(db, existing, traj_data)
         await db.commit()
         return UploadResponse(session_id=session_id, status="updated",
                               metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
     record = Trajectory(**parsed)
     db.add(record)
+    await db.flush()
+    await sync_tool_steps(db, record, traj_data)
     await db.commit()
     return UploadResponse(session_id=session_id, status="created",
                           metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
@@ -205,6 +217,7 @@ async def upload_batch(
     for file in files:
         try:
             content = await file.read()
+            traj_data = json.loads(content)
             parsed = parse_traj_content(content, tool_source)
             session_id = parsed["session_id"] or str(uuid.uuid4())
             parsed["session_id"] = session_id
@@ -229,9 +242,14 @@ async def upload_batch(
                 for key, value in parsed.items():
                     if key != "session_id":
                         setattr(existing, key, value)
+                await db.flush()
+                await sync_tool_steps(db, existing, traj_data)
                 results.append({"session_id": session_id, "status": "updated"})
             else:
-                db.add(Trajectory(**parsed))
+                record = Trajectory(**parsed)
+                db.add(record)
+                await db.flush()
+                await sync_tool_steps(db, record, traj_data)
                 results.append({"session_id": session_id, "status": "created"})
 
         except Exception as e:
@@ -254,6 +272,7 @@ async def reindex(db: AsyncSession = Depends(get_db)):
     scanned = 0
     new = 0
     errors = 0
+    tool_steps_rebuilt = 0
 
     # 新布局：sessions/*/session.traj
     for traj_file in SESSIONS_DIR.glob("*/session.traj"):
@@ -266,13 +285,22 @@ async def reindex(db: AsyncSession = Depends(get_db)):
                 continue
 
             result = await db.execute(select(Trajectory).where(Trajectory.session_id == session_id))
-            if result.scalar_one_or_none():
-                continue
+            existing = result.scalar_one_or_none()
 
             parsed["tool_source"] = parsed.get("tool_source", "claude-code")
             parsed["traj_file_path"] = str(traj_file.relative_to(SESSIONS_DIR.parent))
-            db.add(Trajectory(**parsed))
+
+            if existing:
+                await sync_tool_steps(db, existing, json.loads(content))
+                tool_steps_rebuilt += 1
+                continue
+
+            record = Trajectory(**parsed)
+            db.add(record)
+            await db.flush()
+            await sync_tool_steps(db, record, json.loads(content))
             new += 1
+            tool_steps_rebuilt += 1
         except Exception:
             errors += 1
 
@@ -288,21 +316,36 @@ async def reindex(db: AsyncSession = Depends(get_db)):
                     continue
 
                 result = await db.execute(select(Trajectory).where(Trajectory.session_id == session_id))
-                if result.scalar_one_or_none():
-                    continue
+                existing = result.scalar_one_or_none()
 
                 tool_source = traj_file.parent.name
                 if tool_source == "traj_files":
                     tool_source = "claude-code"
                 parsed["tool_source"] = tool_source
                 parsed["traj_file_path"] = str(traj_file.relative_to(DATA_DIR.parent))
-                db.add(Trajectory(**parsed))
+
+                if existing:
+                    await sync_tool_steps(db, existing, json.loads(content))
+                    tool_steps_rebuilt += 1
+                    continue
+
+                record = Trajectory(**parsed)
+                db.add(record)
+                await db.flush()
+                await sync_tool_steps(db, record, json.loads(content))
                 new += 1
+                tool_steps_rebuilt += 1
             except Exception:
                 errors += 1
 
     await db.commit()
-    return {"scanned": scanned, "new": new, "skipped": scanned - new - errors, "errors": errors}
+    return {
+        "scanned": scanned,
+        "new": new,
+        "skipped": scanned - new - errors,
+        "errors": errors,
+        "tool_steps_rebuilt": tool_steps_rebuilt,
+    }
 
 
 def _summary(parsed: dict) -> dict:

@@ -2,15 +2,21 @@
 
 import axios from 'axios'
 import type {
+  CostStatsResponse,
+  DistributionResponse,
+  StatsOverviewResponse,
   TrajectoryListResponse,
+  TrajectoryBatchUpdateResponse,
   TrajectoryMeta,
   TrajectoryStepsResponse,
+  TrendsResponse,
 } from '../types/trajectory'
 
 // 开发环境通过 vite proxy 转发（/api），生产环境走 /traj/api
 const isProd = import.meta.env.PROD
+export const apiBasePath = isProd ? '/traj/api/v1' : '/api/v1'
 const api = axios.create({
-  baseURL: isProd ? '/traj/api/v1' : '/api/v1',
+  baseURL: apiBasePath,
   auth: {
     username: localStorage.getItem('auth_user') || 'admin',
     password: localStorage.getItem('auth_pass') || '',
@@ -71,9 +77,55 @@ export async function updateTrajectory(sessionId: string, update: Record<string,
   return data
 }
 
+/** 批量更新轨迹标注 */
+export async function batchUpdateTrajectories(update: Record<string, unknown>): Promise<TrajectoryBatchUpdateResponse> {
+  const { data } = await api.patch('/trajectories/batch', update)
+  return data
+}
+
 /** 删除轨迹 */
 export async function deleteTrajectory(sessionId: string) {
   const { data } = await api.delete(`/trajectories/${sessionId}`)
+  return data
+}
+
+/** 统计总览 */
+export async function fetchStatsOverview(params: Record<string, unknown>): Promise<StatsOverviewResponse> {
+  const { data } = await api.get('/stats/overview', { params })
+  return data
+}
+
+/** 趋势统计 */
+export async function fetchStatsTrends(params: Record<string, unknown>): Promise<TrendsResponse> {
+  const { data } = await api.get('/stats/trends', { params })
+  return data
+}
+
+/** 工具分布 */
+export async function fetchToolDistribution(params: Record<string, unknown>): Promise<DistributionResponse> {
+  const { data } = await api.get('/stats/tools', { params })
+  return data
+}
+
+/** 模型分布 */
+export async function fetchModelDistribution(params: Record<string, unknown>): Promise<DistributionResponse> {
+  const { data } = await api.get('/stats/models', { params })
+  return data
+}
+
+/** 成本分析 */
+export async function fetchCostStats(params: Record<string, unknown>): Promise<CostStatsResponse> {
+  const { data } = await api.get('/stats/cost', { params })
+  return data
+}
+
+/** 导出轨迹 zip */
+export async function exportTrajectories(sessionIds: string[]): Promise<Blob> {
+  const { data } = await api.post(
+    '/export/trajectories',
+    { session_ids: sessionIds },
+    { responseType: 'blob' }
+  )
   return data
 }
 

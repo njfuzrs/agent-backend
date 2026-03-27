@@ -1,6 +1,15 @@
 """SQLAlchemy ORM 模型"""
 
-from sqlalchemy import Column, Integer, Text, REAL, Boolean, ForeignKey, UniqueConstraint, Index
+from sqlalchemy import (
+    Boolean,
+    Column,
+    ForeignKey,
+    Index,
+    Integer,
+    REAL,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship, DeclarativeBase
 
 
@@ -76,6 +85,12 @@ class Trajectory(Base):
     uploaded_at = Column(Text, nullable=False)
     updated_at = Column(Text, nullable=False)
 
+    tool_steps = relationship(
+        "ToolStep",
+        back_populates="trajectory",
+        cascade="all, delete-orphan",
+    )
+
     __table_args__ = (
         Index("idx_traj_tool_source", "tool_source"),
         Index("idx_traj_model", "model"),
@@ -114,3 +129,23 @@ class CompareGroupItem(Base):
     trajectory = relationship("Trajectory")
 
     __table_args__ = (UniqueConstraint("group_id", "trajectory_id"),)
+
+
+class ToolStep(Base):
+    __tablename__ = "tool_steps"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trajectory_id = Column(Integer, ForeignKey("trajectories.id", ondelete="CASCADE"), nullable=False)
+    step_index = Column(Integer, nullable=False)
+    message_type = Column(Text, nullable=False)
+    tool_name = Column(Text, nullable=True)
+    tool_input_summary = Column(Text, default="")
+    is_error = Column(Boolean, default=False)
+    timestamp = Column(Text, nullable=True)
+
+    trajectory = relationship("Trajectory", back_populates="tool_steps")
+
+    __table_args__ = (
+        Index("idx_steps_traj_id", "trajectory_id"),
+        Index("idx_steps_tool_name", "tool_name"),
+    )

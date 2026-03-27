@@ -78,3 +78,66 @@ export interface ContentBlock {
   id?: string
   tool_use_id?: string
 }
+
+export interface DistributionItem {
+  name: string
+  count: number
+  total_tokens: number
+  total_cost_usd: number
+}
+
+export interface StatsOverviewResponse {
+  total_trajectories: number
+  total_tokens: number
+  total_cost_usd: number
+  avg_steps_per_trajectory: number
+  avg_cost_per_trajectory: number
+  success_rate: number
+  tool_source_distribution: Record<string, number>
+  model_distribution: Record<string, number>
+  quality_distribution: Record<string, number>
+}
+
+export interface TrendPoint {
+  date: string
+  count: number
+  total_tokens: number
+  total_cost_usd: number
+  avg_steps: number
+  success_rate: number
+}
+
+export interface TrendsResponse {
+  granularity: 'day' | 'week'
+  data: TrendPoint[]
+}
+
+export interface DistributionResponse {
+  items: DistributionItem[]
+}
+
+export interface CostSeriesItem {
+  name: string
+  values: number[]
+}
+
+export interface CostTimelinePoint {
+  date: string
+  total_cost_usd: number
+  by_tool_source: Record<string, number>
+}
+
+export interface CostStatsResponse {
+  granularity: 'day' | 'week'
+  dates: string[]
+  series: CostSeriesItem[]
+  totals_by_tool_source: DistributionItem[]
+  totals_by_model: DistributionItem[]
+  timeline: CostTimelinePoint[]
+}
+
+export interface TrajectoryBatchUpdateResponse {
+  status: string
+  updated_count: number
+  session_ids: string[]
+}
