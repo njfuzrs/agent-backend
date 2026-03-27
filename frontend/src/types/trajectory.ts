@@ -23,6 +23,10 @@ export interface TrajectoryListItem {
   project_name: string
   tags: string[]
   user_id: string | null
+  // AI 评分
+  ai_score: number | null
+  ai_grade: string
+  ai_quality_status: string
 }
 
 export interface TrajectoryMeta extends TrajectoryListItem {

@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
+    # ---- AI 评分配置 ----
+    SCORING_AUTO_ON_UPLOAD: bool = True
+    SCORING_LLM_BASE_URL: str = ""
+    SCORING_LLM_API_KEY: str = ""
+    SCORING_LLM_MODEL: str = "gpt-4o-mini"
+    SCORING_THRESHOLD_APPROVED: int = 70
+    SCORING_THRESHOLD_REJECTED: int = 40
+    SCORING_BATCH_CONCURRENCY: int = 5
+
     @property
     def is_oss(self) -> bool:
         return self.STORAGE_BACKEND == "oss"

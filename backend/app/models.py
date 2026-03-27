@@ -85,6 +85,32 @@ class Trajectory(Base):
     uploaded_at = Column(Text, nullable=False)
     updated_at = Column(Text, nullable=False)
 
+    # ---- AI 评分字段 ----
+    ai_score = Column(Integer, nullable=True, index=True)                # 综合评分 0-100
+    ai_quality_status = Column(Text, default="pending")                  # auto_approved / auto_rejected / needs_review / pending / error
+    ai_grade = Column(Text, default="")                                  # A / B / C / D / F
+
+    # 第一层：规则引擎
+    rule_score = Column(Integer, nullable=True)
+    rule_details = Column(Text, default="{}")                            # JSON: {"R01": 100, ...}
+    rule_flags = Column(Text, default="[]")                              # JSON: ["EXCESSIVE_STEPS"]
+
+    # 第二层：启发式分析
+    heuristic_score = Column(Integer, nullable=True)
+    heuristic_details = Column(Text, default="{}")                       # JSON: {"H01": 90, ...}
+    heuristic_patterns = Column(Text, default="[]")                      # JSON: ["good:search_first"]
+
+    # 第三层：LLM 评估
+    llm_score = Column(Integer, nullable=True)
+    llm_details = Column(Text, default="{}")                             # JSON: {"task_complexity": 80, ...}
+    llm_reasoning = Column(Text, default="")
+    llm_suggested_task_type = Column(Text, default="")
+    llm_eval_model = Column(Text, default="")
+
+    # 评分元信息
+    scored_at = Column(Text, nullable=True)
+    score_version = Column(Integer, default=0)
+
     tool_steps = relationship(
         "ToolStep",
         back_populates="trajectory",
@@ -102,6 +128,9 @@ class Trajectory(Base):
         Index("idx_traj_user_id", "user_id"),
         Index("idx_traj_device_id", "device_id"),
         Index("idx_traj_deleted_at", "deleted_at"),
+        Index("idx_traj_ai_quality_status", "ai_quality_status"),
+        Index("idx_traj_ai_grade", "ai_grade"),
+        Index("idx_traj_score_version", "score_version"),
     )
 
 

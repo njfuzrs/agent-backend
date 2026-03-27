@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import compare, export, stats, trajectories, upload
+from app.routers import compare, export, scoring, stats, trajectories, upload
 from app.schemas import HealthResponse
 
 
@@ -38,6 +38,7 @@ app.include_router(trajectories.router, prefix="/api/v1")
 app.include_router(stats.router, prefix="/api/v1")
 app.include_router(compare.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
+app.include_router(scoring.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

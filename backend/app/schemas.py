@@ -29,6 +29,10 @@ class TrajectoryListItem(BaseModel):
     project_name: str = ""
     tags: list[str] = []
     user_id: Optional[str] = None
+    # AI 评分
+    ai_score: Optional[int] = None
+    ai_grade: str = ""
+    ai_quality_status: str = "pending"
 
 
 class TrajectoryListResponse(BaseModel):
@@ -174,6 +178,10 @@ class SFTExportRequest(BaseModel):
     max_steps: Optional[int] = Field(None, ge=0)
     format: str = Field("messages", pattern="^(messages|tool|xml)$")
     include_thinking: bool = False
+    # AI 评分过滤
+    ai_quality_status: Optional[str] = None
+    min_ai_score: Optional[int] = Field(None, ge=0, le=100)
+    ai_grade: Optional[str] = None
 
 
 class CompareGroupCreateRequest(BaseModel):

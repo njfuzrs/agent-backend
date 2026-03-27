@@ -165,6 +165,28 @@ export default function TrajectoryList() {
       render: (value: string) => EXIT_STATUS_ICON[value] || <span>{value || '-'}</span>,
     },
     {
+      title: 'AI 评分',
+      dataIndex: 'ai_score',
+      width: 100,
+      sorter: true,
+      align: 'center',
+      render: (_value: number | null, record) => {
+        if (record.ai_score == null) return <span style={{ color: '#8c8c8c' }}>-</span>
+        const gradeColors: Record<string, string> = { A: '#52c41a', B: '#73d13d', C: '#faad14', D: '#ff7a45', F: '#ff4d4f' }
+        const statusColors: Record<string, string> = { auto_approved: 'success', auto_rejected: 'error', needs_review: 'warning' }
+        return (
+          <Space size={4} direction="vertical">
+            <span style={{ fontWeight: 600, color: gradeColors[record.ai_grade] || '#8c8c8c' }}>
+              {record.ai_grade} {record.ai_score}
+            </span>
+            <Tag color={statusColors[record.ai_quality_status] || 'default'} style={{ fontSize: 11 }}>
+              {record.ai_quality_status === 'auto_approved' ? '通过' : record.ai_quality_status === 'auto_rejected' ? '拒绝' : record.ai_quality_status === 'needs_review' ? '待审' : record.ai_quality_status}
+            </Tag>
+          </Space>
+        )
+      },
+    },
+    {
       title: '质量',
       dataIndex: 'quality_status',
       width: 140,
@@ -387,6 +409,31 @@ export default function TrajectoryList() {
               updateFilter('start_date', undefined)
               updateFilter('end_date', undefined)
             }}
+          />
+          <Select
+            placeholder="AI 等级"
+            allowClear
+            style={{ width: 120 }}
+            options={[
+              { value: 'A', label: 'A (80-100)' },
+              { value: 'B', label: 'B (70-79)' },
+              { value: 'C', label: 'C (40-69)' },
+              { value: 'D', label: 'D (20-39)' },
+              { value: 'F', label: 'F (0-19)' },
+            ]}
+            onChange={value => updateFilter('ai_grade', value)}
+          />
+          <Select
+            placeholder="AI 状态"
+            allowClear
+            style={{ width: 140 }}
+            options={[
+              { value: 'auto_approved', label: 'AI 通过' },
+              { value: 'auto_rejected', label: 'AI 拒绝' },
+              { value: 'needs_review', label: '待人工审' },
+              { value: 'pending', label: '未评分' },
+            ]}
+            onChange={value => updateFilter('ai_quality_status', value)}
           />
         </Space>
       </Card>

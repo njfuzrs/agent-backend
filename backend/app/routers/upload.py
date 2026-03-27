@@ -17,6 +17,9 @@ from app.schemas import UploadResponse
 from app.services.traj_parser import parse_traj_content
 from app.services.storage import storage, compute_sha256
 from app.services.tool_steps import sync_tool_steps
+from app.services.scoring.rule_scorer import score_by_rules
+from app.services.scoring.engine import _persist_result, _score_to_grade, SCORE_VERSION
+from app.services.scoring.models import ScoringResult
 from app.utils.auth import verify_upload_token
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -118,6 +121,7 @@ async def upload_session_file(
                     setattr(existing, key, value)
             await db.flush()
             await sync_tool_steps(db, existing, traj_data)
+            _auto_rule_score(existing)
             await db.commit()
             return UploadResponse(session_id=session_id, status="updated",
                                   metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
@@ -126,6 +130,7 @@ async def upload_session_file(
         db.add(record)
         await db.flush()
         await sync_tool_steps(db, record, traj_data)
+        _auto_rule_score(record)
         await db.commit()
         return UploadResponse(session_id=session_id, status="created",
                               metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
@@ -192,6 +197,7 @@ async def upload_traj(
                 setattr(existing, key, value)
         await db.flush()
         await sync_tool_steps(db, existing, traj_data)
+        _auto_rule_score(existing)
         await db.commit()
         return UploadResponse(session_id=session_id, status="updated",
                               metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
@@ -200,6 +206,7 @@ async def upload_traj(
     db.add(record)
     await db.flush()
     await sync_tool_steps(db, record, traj_data)
+    _auto_rule_score(record)
     await db.commit()
     return UploadResponse(session_id=session_id, status="created",
                           metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
@@ -244,12 +251,14 @@ async def upload_batch(
                         setattr(existing, key, value)
                 await db.flush()
                 await sync_tool_steps(db, existing, traj_data)
+                _auto_rule_score(existing)
                 results.append({"session_id": session_id, "status": "updated"})
             else:
                 record = Trajectory(**parsed)
                 db.add(record)
                 await db.flush()
                 await sync_tool_steps(db, record, traj_data)
+                _auto_rule_score(record)
                 results.append({"session_id": session_id, "status": "created"})
 
         except Exception as e:
@@ -357,3 +366,22 @@ def _summary(parsed: dict) -> dict:
         "exit_status": parsed.get("exit_status", ""),
         "first_prompt": parsed.get("first_prompt", "")[:100],
     }
+
+
+def _auto_rule_score(traj: Trajectory) -> None:
+    """上传后同步执行第一层规则评分（毫秒级，不阻塞）。"""
+    if not settings.SCORING_AUTO_ON_UPLOAD:
+        return
+    try:
+        rule_result = score_by_rules(traj)
+        grade_score = min(rule_result.rule_score, 39) if rule_result.skip_further else rule_result.rule_score
+        result = ScoringResult(
+            ai_score=rule_result.rule_score,
+            ai_grade=_score_to_grade(grade_score),
+            ai_quality_status="auto_rejected" if rule_result.skip_further else "pending",
+            rule=rule_result,
+            score_version=SCORE_VERSION,
+        )
+        _persist_result(traj, result)
+    except Exception:
+        pass

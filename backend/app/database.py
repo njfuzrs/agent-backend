@@ -48,11 +48,28 @@ def _migrate_sqlite_columns(conn):
         ("user_id", "TEXT", None),
         ("device_id", "TEXT", None),
         ("deleted_at", "TEXT", None),
+        # AI 评分相关列
+        ("ai_score", "INTEGER", None),
+        ("ai_quality_status", "TEXT", "'pending'"),
+        ("ai_grade", "TEXT", "''"),
+        ("rule_score", "INTEGER", None),
+        ("rule_details", "TEXT", "'{}'"),
+        ("rule_flags", "TEXT", "'[]'"),
+        ("heuristic_score", "INTEGER", None),
+        ("heuristic_details", "TEXT", "'{}'"),
+        ("heuristic_patterns", "TEXT", "'[]'"),
+        ("llm_score", "INTEGER", None),
+        ("llm_details", "TEXT", "'{}'"),
+        ("llm_reasoning", "TEXT", "''"),
+        ("llm_suggested_task_type", "TEXT", "''"),
+        ("llm_eval_model", "TEXT", "''"),
+        ("scored_at", "TEXT", None),
+        ("score_version", "INTEGER", "0"),
     ]
 
     for col_name, col_type, default in new_columns:
         if col_name not in existing_cols:
-            default_clause = f" DEFAULT {default!r}" if default is not None else ""
+            default_clause = f" DEFAULT {default}" if default is not None else ""
             cursor.execute(f"ALTER TABLE trajectories ADD COLUMN {col_name} {col_type}{default_clause}")
 
     cursor.close()

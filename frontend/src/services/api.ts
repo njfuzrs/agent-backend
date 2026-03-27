@@ -228,4 +228,30 @@ export async function healthCheck() {
   return data
 }
 
+/** 单条轨迹 AI 评分 */
+export async function scoreTrajectory(sessionId: string, runHeuristic = true, runLlm = false) {
+  const { data } = await api.post(`/scoring/score/${sessionId}`, null, {
+    params: { run_heuristic: runHeuristic, run_llm: runLlm },
+  })
+  return data
+}
+
+/** 批量 AI 评分 */
+export async function batchScore(payload: Record<string, unknown>) {
+  const { data } = await api.post('/scoring/batch', payload)
+  return data
+}
+
+/** 评分统计 */
+export async function fetchScoringStats() {
+  const { data } = await api.get('/scoring/stats')
+  return data
+}
+
+/** 评分详情 */
+export async function fetchScoreDetail(sessionId: string) {
+  const { data } = await api.get(`/scoring/${sessionId}`)
+  return data
+}
+
 export default api
