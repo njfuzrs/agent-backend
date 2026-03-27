@@ -94,7 +94,7 @@ async def _call_llm(prompt: str, model: str) -> dict:
         "temperature": 0.1,
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{settings.SCORING_LLM_BASE_URL}/chat/completions",
             headers=headers,

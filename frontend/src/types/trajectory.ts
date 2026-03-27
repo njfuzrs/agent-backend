@@ -153,6 +153,36 @@ export interface TrajectoryBatchUpdateResponse {
   session_ids: string[]
 }
 
+/** AI 评分详情 */
+export interface ScoringDetail {
+  session_id: string
+  ai_score: number | null
+  ai_grade: string
+  ai_quality_status: string
+  rule_score: number | null
+  rule_details: Record<string, number>
+  rule_flags: string[]
+  heuristic_score: number | null
+  heuristic_details: Record<string, number>
+  heuristic_patterns: string[]
+  llm_score: number | null
+  llm_details: Record<string, number>
+  llm_reasoning: string
+  llm_suggested_task_type: string
+  llm_eval_model: string
+  scored_at: string | null
+  score_version: number
+}
+
+/** AI 评分统计 */
+export interface ScoringStatsResponse {
+  status_distribution: Record<string, number>
+  grade_distribution: Record<string, number>
+  avg_score: number
+  total_scored: number
+  total_pending: number
+}
+
 export interface CompareGroupListItem {
   id: number
   name: string

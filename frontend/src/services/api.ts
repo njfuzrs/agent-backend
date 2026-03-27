@@ -254,4 +254,10 @@ export async function fetchScoreDetail(sessionId: string) {
   return data
 }
 
+/** 全量重新评分 */
+export async function rescoreAll(params: { run_heuristic?: boolean; run_llm?: boolean } = {}) {
+  const { data } = await api.post('/scoring/rescore-all', null, { params })
+  return data
+}
+
 export default api

@@ -57,6 +57,11 @@ async def get_overview(
     total_steps = sum(t.total_steps or 0 for t in trajectories)
     success_count = sum(1 for t in trajectories if (t.exit_status or "") == "end_turn")
 
+    # AI 评分分布统计
+    ai_quality_distribution = dict(Counter((t.ai_quality_status or "pending") for t in trajectories))
+    scored = [t for t in trajectories if t.ai_score is not None]
+    avg_ai_score = round(sum(t.ai_score for t in scored) / len(scored), 1) if scored else 0.0
+
     return {
         "total_trajectories": total,
         "total_tokens": total_tokens,
@@ -67,6 +72,8 @@ async def get_overview(
         "tool_source_distribution": dict(Counter(t.tool_source or "unknown" for t in trajectories)),
         "model_distribution": dict(Counter((t.model or "unknown") for t in trajectories)),
         "quality_distribution": dict(Counter((t.quality_status or "unreviewed") for t in trajectories)),
+        "ai_quality_distribution": ai_quality_distribution,
+        "avg_ai_score": avg_ai_score,
     }
 
 

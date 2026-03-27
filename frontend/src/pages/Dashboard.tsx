@@ -14,12 +14,13 @@ import {
 import {
   fetchCostStats,
   fetchModelDistribution,
+  fetchScoringStats,
   fetchStatsOverview,
   fetchStatsTrends,
   fetchToolDistribution,
   fetchTrajectories,
 } from '../services/api'
-import type { TrajectoryListItem } from '../types/trajectory'
+import type { TrajectoryListItem, ScoringStatsResponse } from '../types/trajectory'
 import { CHART_COLORS } from '../utils/chart'
 import { formatCurrency, formatPercent, formatTokens } from '../utils/format'
 
@@ -69,6 +70,11 @@ export default function Dashboard() {
   const { data: recent, isLoading: recentLoading } = useQuery({
     queryKey: ['dashboard-recent', filters],
     queryFn: () => fetchTrajectories({ page: 1, page_size: 10, sort: '-start_time', ...filters }),
+  })
+
+  const { data: scoringStats } = useQuery<ScoringStatsResponse>({
+    queryKey: ['scoring-stats'],
+    queryFn: fetchScoringStats,
   })
 
   const columns: ColumnsType<TrajectoryListItem> = [
@@ -177,6 +183,44 @@ export default function Dashboard() {
           />
         </Col>
       </Row>
+
+      {/* AI 评分概览 */}
+      {scoringStats && (
+        <Row gutter={[16, 16]}>
+          <Col xs={24} sm={12} lg={6}>
+            <StatsCard
+              title="AI 已评分"
+              value={String(scoringStats.total_scored)}
+              hint={`待评分 ${scoringStats.total_pending} 条`}
+            />
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <StatsCard
+              title="AI 平均分"
+              value={String(scoringStats.avg_score)}
+              hint={`通过 ${scoringStats.status_distribution?.auto_approved ?? 0} 条`}
+            />
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <StatsCard
+              title="AI 通过率"
+              value={formatPercent(
+                scoringStats.total_scored > 0
+                  ? (scoringStats.status_distribution?.auto_approved ?? 0) / scoringStats.total_scored
+                  : 0
+              )}
+              hint={`拒绝 ${scoringStats.status_distribution?.auto_rejected ?? 0} 条`}
+            />
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <StatsCard
+              title="AI 等级分布"
+              value={`A:${scoringStats.grade_distribution?.A ?? 0} B:${scoringStats.grade_distribution?.B ?? 0}`}
+              hint={`C:${scoringStats.grade_distribution?.C ?? 0} D:${scoringStats.grade_distribution?.D ?? 0} F:${scoringStats.grade_distribution?.F ?? 0}`}
+            />
+          </Col>
+        </Row>
+      )}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={14}>

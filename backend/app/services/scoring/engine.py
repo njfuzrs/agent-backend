@@ -106,6 +106,8 @@ async def batch_score(
 
 def _compute_final(rule, heuristic, llm) -> tuple[int, str]:
     """综合三层分数。"""
+    from app.config import settings
+
     if llm is not None and heuristic is not None:
         score = int(
             rule.rule_score * 0.2
@@ -120,9 +122,9 @@ def _compute_final(rule, heuristic, llm) -> tuple[int, str]:
     else:
         score = rule.rule_score
 
-    if score >= 70:
+    if score >= settings.SCORING_THRESHOLD_APPROVED:
         status = "auto_approved"
-    elif score >= 40:
+    elif score >= settings.SCORING_THRESHOLD_REJECTED:
         status = "needs_review"
     else:
         status = "auto_rejected"

@@ -115,6 +115,8 @@ class StatsOverviewResponse(BaseModel):
     tool_source_distribution: dict[str, int] = {}
     model_distribution: dict[str, int] = {}
     quality_distribution: dict[str, int] = {}
+    ai_quality_distribution: dict[str, int] = {}
+    avg_ai_score: float = 0.0
 
 
 class TrendPoint(BaseModel):

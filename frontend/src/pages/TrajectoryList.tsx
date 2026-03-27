@@ -28,6 +28,7 @@ import type { FilterValue, SorterResult, TablePaginationConfig } from 'antd/es/t
 import dayjs from 'dayjs'
 import {
   addCompareGroupItems,
+  batchScore,
   batchUpdateTrajectories,
   createCompareGroup,
   exportTrajectories,
@@ -70,6 +71,7 @@ export default function TrajectoryList() {
   const [batchForm] = Form.useForm()
   const [compareForm] = Form.useForm()
   const [sftForm] = Form.useForm()
+  const [batchScoring, setBatchScoring] = useState(false)
 
   const queryParams = { page, page_size: pageSize, sort, ...filters }
 
@@ -304,6 +306,25 @@ export default function TrajectoryList() {
     }
   }
 
+  const handleBatchScore = async (sessionIds?: Key[], statusFilter?: string) => {
+    setBatchScoring(true)
+    try {
+      const payload: Record<string, unknown> = { run_heuristic: true, limit: 500 }
+      if (sessionIds?.length) {
+        payload.session_ids = sessionIds.map(String)
+      } else if (statusFilter) {
+        payload.ai_quality_status = statusFilter
+      }
+      const result = await batchScore(payload)
+      message.success(`已提交 ${result.count ?? 0} 条轨迹评分`)
+      await queryClient.invalidateQueries({ queryKey: ['trajectories'] })
+    } catch {
+      message.error('批量评分失败')
+    } finally {
+      setBatchScoring(false)
+    }
+  }
+
   const handleSftExport = async () => {
     const values = await sftForm.validateFields()
     setSftExporting(true)
@@ -455,6 +476,19 @@ export default function TrajectoryList() {
             </Button>
             <Button onClick={() => setSftOpen(true)}>
               导出 SFT
+            </Button>
+            <Button
+              loading={batchScoring}
+              disabled={!selectedRowKeys.length}
+              onClick={() => handleBatchScore(selectedRowKeys)}
+            >
+              批量 AI 评分
+            </Button>
+            <Button
+              loading={batchScoring}
+              onClick={() => handleBatchScore(undefined, 'pending')}
+            >
+              评分所有待评
             </Button>
           </Space>
         </div>
