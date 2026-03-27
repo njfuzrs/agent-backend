@@ -13,17 +13,18 @@ _TRIVIAL_PATTERNS = re.compile(
 )
 
 # 各规则权重
+# R01 降权：未完成的轨迹同样有训练价值，完成状态不应是主要评判标准
 _WEIGHTS = {
-    "R01": 0.25,  # 完成状态
+    "R01": 0.10,  # 完成状态（降权，未完成轨迹也有价值）
     "R02": 0.15,  # 步骤数合理性
-    "R03": 0.10,  # 工具多样性
+    "R03": 0.15,  # 工具多样性（提权，工具链丰富度更重要）
     "R04": 0.10,  # 有实质内容
     "R05": 0.10,  # Token 效率
     "R06": 0.05,  # 有思考过程
     "R07": 0.05,  # 成本合理性
     "R08": 0.05,  # 时长合理性
-    "R09": 0.10,  # 有文件编辑
-    "R10": 0.05,  # 非空任务类型
+    "R09": 0.15,  # 有文件编辑（提权，有实际编辑更有训练价值）
+    "R10": 0.10,  # 非空任务类型（提权）
 }
 
 
@@ -33,13 +34,14 @@ def score_by_rules(traj: Trajectory) -> RuleScoreResult:
     flags: list[str] = []
 
     # --- R01 完成状态 ---
+    # 未完成的轨迹也有训练价值，不应给 0 分
     exit_status = (traj.exit_status or "").strip()
     if exit_status == "end_turn":
         details["R01"] = 100
-    elif exit_status == "partial":
-        details["R01"] = 40
+    elif exit_status in ("tool_use", "partial"):
+        details["R01"] = 70
     else:
-        details["R01"] = 0
+        details["R01"] = 50
 
     # --- R02 步骤数合理性 ---
     steps = traj.total_steps or 0

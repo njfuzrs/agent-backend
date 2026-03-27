@@ -17,7 +17,7 @@ from .llm_scorer import score_by_llm, build_tool_sequence_summary
 logger = logging.getLogger(__name__)
 
 # 当前评分规则版本，规则变更时递增
-SCORE_VERSION = 2
+SCORE_VERSION = 3
 
 
 async def score_trajectory(
