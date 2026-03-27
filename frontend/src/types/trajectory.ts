@@ -141,3 +141,60 @@ export interface TrajectoryBatchUpdateResponse {
   updated_count: number
   session_ids: string[]
 }
+
+export interface CompareGroupListItem {
+  id: number
+  name: string
+  description: string
+  task_prompt: string
+  created_at: string
+  item_count: number
+  tool_sources: string[]
+}
+
+export interface CompareGroupListResponse {
+  items: CompareGroupListItem[]
+}
+
+export interface CompareTrajectoryItem {
+  trajectory_id: number
+  session_id: string
+  tool_source: string
+  model: string
+  start_time: string | null
+  duration_ms: number | null
+  total_steps: number
+  total_tokens: number
+  total_cost_usd: number
+  exit_status: string
+  quality_status: string
+  first_prompt: string
+  tools_used: string[]
+  tool_usage: Record<string, number>
+}
+
+export interface CompareGroupDetailResponse {
+  id: number
+  name: string
+  description: string
+  task_prompt: string
+  created_at: string
+  item_count: number
+  items: CompareTrajectoryItem[]
+}
+
+export interface CompareRadarItem {
+  trajectory_id: number
+  session_id: string
+  tool_source: string
+  model: string
+  values: Array<number | string>
+  normalized: number[]
+}
+
+export interface CompareRadarResponse {
+  group_id: number
+  group_name: string
+  dimensions: string[]
+  items: CompareRadarItem[]
+}

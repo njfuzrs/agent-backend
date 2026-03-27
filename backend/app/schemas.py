@@ -1,7 +1,8 @@
 """Pydantic 请求/响应模型"""
 
-from pydantic import BaseModel, Field
 from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 # ── 轨迹列表项 ──
@@ -156,6 +157,96 @@ class CostStatsResponse(BaseModel):
 
 class TrajectoryExportRequest(BaseModel):
     session_ids: list[str] = Field(..., min_length=1)
+
+
+class SFTExportRequest(BaseModel):
+    session_ids: Optional[list[str]] = None
+    tool_source: Optional[str] = None
+    model: Optional[str] = None
+    exit_status: Optional[str] = None
+    task_type: Optional[str] = None
+    quality_status: Optional[str] = None
+    project_name: Optional[str] = None
+    search: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    min_steps: Optional[int] = Field(None, ge=0)
+    max_steps: Optional[int] = Field(None, ge=0)
+    format: str = Field("messages", pattern="^(messages|tool|xml)$")
+    include_thinking: bool = False
+
+
+class CompareGroupCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str = ""
+    task_prompt: str = ""
+
+
+class CompareGroupAddItemsRequest(BaseModel):
+    session_ids: list[str] = Field(..., min_length=1)
+
+
+class CompareGroupAddItemsResponse(BaseModel):
+    group_id: int
+    added_count: int = 0
+    skipped_session_ids: list[str] = []
+
+
+class CompareGroupListItem(BaseModel):
+    id: int
+    name: str
+    description: str = ""
+    task_prompt: str = ""
+    created_at: str
+    item_count: int = 0
+    tool_sources: list[str] = []
+
+
+class CompareGroupListResponse(BaseModel):
+    items: list[CompareGroupListItem] = []
+
+
+class CompareTrajectoryItem(BaseModel):
+    trajectory_id: int
+    session_id: str
+    tool_source: str
+    model: str
+    start_time: Optional[str] = None
+    duration_ms: Optional[int] = None
+    total_steps: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    exit_status: str = ""
+    quality_status: str = "unreviewed"
+    first_prompt: str = ""
+    tools_used: list[str] = []
+    tool_usage: dict[str, int] = {}
+
+
+class CompareGroupDetailResponse(BaseModel):
+    id: int
+    name: str
+    description: str = ""
+    task_prompt: str = ""
+    created_at: str
+    item_count: int = 0
+    items: list[CompareTrajectoryItem] = []
+
+
+class CompareRadarItem(BaseModel):
+    trajectory_id: int
+    session_id: str
+    tool_source: str
+    model: str
+    values: list[float | str] = []
+    normalized: list[float] = []
+
+
+class CompareRadarResponse(BaseModel):
+    group_id: int
+    group_name: str
+    dimensions: list[str] = []
+    items: list[CompareRadarItem] = []
 
 
 # ── 健康检查 ──

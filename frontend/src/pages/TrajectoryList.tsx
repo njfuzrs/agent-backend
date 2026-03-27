@@ -27,8 +27,12 @@ import type { ColumnsType } from 'antd/es/table'
 import type { FilterValue, SorterResult, TablePaginationConfig } from 'antd/es/table/interface'
 import dayjs from 'dayjs'
 import {
+  addCompareGroupItems,
   batchUpdateTrajectories,
+  createCompareGroup,
   exportTrajectories,
+  exportSFT,
+  fetchCompareGroups,
   fetchTrajectories,
 } from '../services/api'
 import type { TrajectoryListItem } from '../types/trajectory'
@@ -59,13 +63,24 @@ export default function TrajectoryList() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([])
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchSaving, setBatchSaving] = useState(false)
+  const [compareOpen, setCompareOpen] = useState(false)
+  const [compareSaving, setCompareSaving] = useState(false)
+  const [sftOpen, setSftOpen] = useState(false)
+  const [sftExporting, setSftExporting] = useState(false)
   const [batchForm] = Form.useForm()
+  const [compareForm] = Form.useForm()
+  const [sftForm] = Form.useForm()
 
   const queryParams = { page, page_size: pageSize, sort, ...filters }
 
   const { data, isLoading } = useQuery({
     queryKey: ['trajectories', queryParams],
     queryFn: () => fetchTrajectories(queryParams),
+  })
+
+  const { data: compareGroups } = useQuery({
+    queryKey: ['compare-groups'],
+    queryFn: fetchCompareGroups,
   })
 
   const updateFilter = (key: string, value: unknown) => {
@@ -229,6 +244,70 @@ export default function TrajectoryList() {
     }
   }
 
+  const handleCompareSubmit = async () => {
+    const values = await compareForm.validateFields()
+    const selectedSessions = selectedRowKeys.map(String)
+    if (!selectedSessions.length) {
+      message.warning('请先选择至少一条轨迹')
+      return
+    }
+
+    let groupId = values.group_id as number | undefined
+    if (!groupId && !values.new_group_name) {
+      message.error('请选择已有对比组，或输入新对比组名称')
+      return
+    }
+
+    setCompareSaving(true)
+    try {
+      if (!groupId) {
+        const created = await createCompareGroup({
+          name: values.new_group_name,
+          description: values.new_group_description,
+          task_prompt: values.new_group_task_prompt,
+        })
+        groupId = created.id
+      }
+
+      await addCompareGroupItems(groupId, selectedSessions)
+      message.success(`已添加 ${selectedSessions.length} 条轨迹到对比组`)
+      setCompareOpen(false)
+      setSelectedRowKeys([])
+      compareForm.resetFields()
+      await queryClient.invalidateQueries({ queryKey: ['compare-groups'] })
+    } catch {
+      message.error('添加到对比组失败')
+    } finally {
+      setCompareSaving(false)
+    }
+  }
+
+  const handleSftExport = async () => {
+    const values = await sftForm.validateFields()
+    setSftExporting(true)
+    try {
+      const payload: Record<string, unknown> = {
+        format: values.format,
+        include_thinking: values.include_thinking ?? false,
+      }
+
+      if (selectedRowKeys.length) {
+        payload.session_ids = selectedRowKeys.map(String)
+      } else {
+        Object.assign(payload, filters)
+      }
+
+      const blob = await exportSFT(payload)
+      downloadBlob(blob, `traj-sft-${values.format}-${dayjs().format('YYYYMMDD-HHmmss')}.jsonl`)
+      setSftOpen(false)
+      message.success('SFT 导出成功')
+    } catch {
+      message.error('SFT 导出失败')
+    } finally {
+      setSftExporting(false)
+    }
+  }
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <Typography.Title level={4} style={{ color: '#fff', margin: 0 }}>
@@ -321,8 +400,14 @@ export default function TrajectoryList() {
             <Button onClick={() => setBatchOpen(true)} disabled={!selectedRowKeys.length}>
               批量标注
             </Button>
+            <Button onClick={() => setCompareOpen(true)} disabled={!selectedRowKeys.length}>
+              添加到对比组
+            </Button>
             <Button onClick={handleExport} disabled={!selectedRowKeys.length}>
-              批量导出
+              导出 .traj
+            </Button>
+            <Button onClick={() => setSftOpen(true)}>
+              导出 SFT
             </Button>
           </Space>
         </div>
@@ -384,6 +469,78 @@ export default function TrajectoryList() {
           </Form.Item>
           <Form.Item name="tags" label="标签">
             <Select mode="tags" placeholder="输入一个或多个标签" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="添加到对比组"
+        open={compareOpen}
+        onOk={handleCompareSubmit}
+        confirmLoading={compareSaving}
+        onCancel={() => setCompareOpen(false)}
+        destroyOnHidden
+      >
+        <Form form={compareForm} layout="vertical">
+          <Form.Item name="group_id" label="选择已有对比组">
+            <Select
+              allowClear
+              placeholder="选择一个对比组"
+              options={(compareGroups?.items ?? []).map(item => ({
+                value: item.id,
+                label: `${item.name}（${item.item_count} 条）`,
+              }))}
+            />
+          </Form.Item>
+          <Typography.Text style={{ color: '#8c8c8c' }}>
+            如果不选已有对比组，可以直接创建新的。
+          </Typography.Text>
+          <Form.Item name="new_group_name" label="新对比组名称" style={{ marginTop: 12 }}>
+            <Input placeholder="例如：修复 login bug" />
+          </Form.Item>
+          <Form.Item name="new_group_task_prompt" label="任务提示词">
+            <Input.TextArea rows={3} placeholder="例如：修复登录页面空指针异常" />
+          </Form.Item>
+          <Form.Item name="new_group_description" label="说明">
+            <Input.TextArea rows={3} placeholder="记录对比背景和差异点" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="导出 SFT 训练数据"
+        open={sftOpen}
+        onOk={handleSftExport}
+        confirmLoading={sftExporting}
+        onCancel={() => setSftOpen(false)}
+        destroyOnHidden
+      >
+        <Form
+          form={sftForm}
+          layout="vertical"
+          initialValues={{ format: 'messages', include_thinking: false }}
+        >
+          <Typography.Paragraph style={{ color: '#8c8c8c' }}>
+            {selectedRowKeys.length
+              ? `当前将导出已选中的 ${selectedRowKeys.length} 条轨迹。`
+              : '当前未选择轨迹，将按列表筛选条件导出。'}
+          </Typography.Paragraph>
+          <Form.Item name="format" label="导出格式" rules={[{ required: true, message: '请选择导出格式' }]}>
+            <Select
+              options={[
+                { value: 'messages', label: 'messages（推荐）' },
+                { value: 'tool', label: 'tool 文本' },
+                { value: 'xml', label: 'XML 文本' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="include_thinking" label="保留 thinking">
+            <Select
+              options={[
+                { value: false, label: '否' },
+                { value: true, label: '是' },
+              ]}
+            />
           </Form.Item>
         </Form>
       </Modal>

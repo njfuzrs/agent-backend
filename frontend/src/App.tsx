@@ -1,12 +1,15 @@
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { Layout, Menu, Typography, Modal, Input, Form, message } from 'antd'
 import {
+  ApartmentOutlined,
   DashboardOutlined,
   UnorderedListOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import Dashboard from './pages/Dashboard'
+import CompareDetail from './pages/CompareDetail'
+import CompareList from './pages/CompareList'
 import TrajectoryList from './pages/TrajectoryList'
 import TrajectoryDetail from './pages/TrajectoryDetail'
 import { setAuth, hasAuth } from './services/api'
@@ -27,7 +30,13 @@ function App() {
     window.location.reload()
   }
 
-  const selectedKey = location.pathname.startsWith('/trajectories') ? '/trajectories' : '/'
+  const selectedKey = location.pathname.startsWith('/trajectories')
+    ? '/trajectories'
+    : location.pathname.startsWith('/compare')
+      ? '/compare'
+      : location.pathname.startsWith('/settings')
+        ? '/settings'
+        : '/'
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -43,6 +52,7 @@ function App() {
           items={[
             { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
             { key: '/trajectories', icon: <UnorderedListOutlined />, label: '轨迹' },
+            { key: '/compare', icon: <ApartmentOutlined />, label: '对比' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
@@ -53,6 +63,8 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/trajectories" element={<TrajectoryList />} />
           <Route path="/trajectories/:sessionId" element={<TrajectoryDetail />} />
+          <Route path="/compare" element={<CompareList />} />
+          <Route path="/compare/:groupId" element={<CompareDetail />} />
           <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         </Routes>
       </Content>
