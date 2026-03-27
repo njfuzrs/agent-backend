@@ -97,6 +97,8 @@ export default function ToolCallBlock({ action, observation, forceExpanded = fal
                 overflow: 'auto',
                 maxHeight: 300,
                 whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
               }}>
                 {JSON.stringify(action.tool_input, null, 2)}
               </pre>
@@ -119,6 +121,8 @@ export default function ToolCallBlock({ action, observation, forceExpanded = fal
                 overflow: 'auto',
                 maxHeight: 400,
                 whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
               }}>
                 {observation.content || '-'}
               </pre>

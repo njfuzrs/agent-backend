@@ -5,6 +5,7 @@ export interface DetailTextNode {
   kind: 'system' | 'user' | 'assistant' | 'note' | 'warning'
   text: string
   timestamp?: string
+  isFinalAnswer?: boolean
 }
 
 export interface DetailThinkingNode {
@@ -29,6 +30,7 @@ export interface DetailSection {
   title: string
   summary: string
   nodes: DetailNode[]
+  hasFinalAnswer: boolean
 }
 
 export interface DetailModel {
@@ -37,6 +39,8 @@ export interface DetailModel {
   nodeCount: number
   thinkingCount: number
   toolCount: number
+  finalAnswerNodeId?: string
+  finalAnswerSectionId?: string
 }
 
 const SYSTEM_REMINDER_PREFIX = '<system-reminder>'
@@ -235,13 +239,26 @@ export function buildDetailModel(
     })
   })
 
+  let finalAnswerNodeId: string | undefined
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const node = nodes[index]
+    if (node.kind === 'assistant') {
+      node.isFinalAnswer = true
+      finalAnswerNodeId = node.id
+      break
+    }
+  }
+
   const sections = buildSections(nodes, firstPrompt)
+  const finalAnswerSectionId = sections.find(section => section.hasFinalAnswer)?.id
   return {
     systemPrompts,
     sections,
     nodeCount: nodes.length,
     thinkingCount: nodes.filter(node => node.kind === 'thinking').length,
     toolCount: nodes.filter(node => node.kind === 'tool').length,
+    finalAnswerNodeId,
+    finalAnswerSectionId,
   }
 }
 
@@ -256,6 +273,7 @@ function buildSections(nodes: DetailNode[], firstPrompt: string): DetailSection[
         title: buildSectionTitle(node.text, sections.length + 1),
         summary: buildSectionSummary(node.text),
         nodes: [node],
+        hasFinalAnswer: !!node.isFinalAnswer,
       }
       sections.push(current)
       return
@@ -267,11 +285,15 @@ function buildSections(nodes: DetailNode[], firstPrompt: string): DetailSection[
         title: firstPrompt ? 'Prompt 1' : '会话过程',
         summary: firstPrompt ? buildSectionSummary(firstPrompt) : '系统提示后的执行流程',
         nodes: [],
+        hasFinalAnswer: false,
       }
       sections.push(current)
     }
 
     current.nodes.push(node)
+    if (node.kind === 'assistant' && node.isFinalAnswer) {
+      current.hasFinalAnswer = true
+    }
   })
 
   return sections

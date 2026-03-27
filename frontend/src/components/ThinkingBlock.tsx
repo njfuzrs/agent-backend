@@ -53,6 +53,8 @@ export default function ThinkingBlock({ content, forceExpanded = false }: Props)
           maxHeight: 400,
           overflow: 'auto',
           lineHeight: 1.5,
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
         }}>
           {content}
         </div>

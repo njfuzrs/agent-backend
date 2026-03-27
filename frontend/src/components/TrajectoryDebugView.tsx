@@ -49,6 +49,8 @@ function JsonCard({ value }: { value: unknown }) {
           color: '#d4d4d4',
           lineHeight: 1.6,
           fontSize: 12,
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
         }}
       >
         {JSON.stringify(value, null, 2)}

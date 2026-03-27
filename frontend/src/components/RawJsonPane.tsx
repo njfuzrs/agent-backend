@@ -21,6 +21,8 @@ export default function RawJsonPane({ content }: RawJsonPaneProps) {
         whiteSpace: 'pre-wrap',
         lineHeight: 1.6,
         fontSize: 12,
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word',
       }}
     >
       {content}
