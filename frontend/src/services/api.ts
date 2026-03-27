@@ -5,6 +5,7 @@ import type {
   CompareGroupDetailResponse,
   CompareGroupListResponse,
   CompareRadarResponse,
+  HistoryEntry,
   CostStatsResponse,
   DistributionResponse,
   StatsOverviewResponse,
@@ -95,7 +96,7 @@ export async function fetchAllTrajectorySteps(sessionId: string): Promise<Trajec
 }
 
 /** 轨迹 history */
-export async function fetchTrajectoryHistory(sessionId: string): Promise<unknown[]> {
+export async function fetchTrajectoryHistory(sessionId: string): Promise<HistoryEntry[]> {
   const { data } = await api.get(`/trajectories/${sessionId}/detail/history`)
   return data
 }
@@ -104,6 +105,15 @@ export async function fetchTrajectoryHistory(sessionId: string): Promise<unknown
 export async function fetchTrajectoryInfo(sessionId: string): Promise<Record<string, unknown>> {
   const { data } = await api.get(`/trajectories/${sessionId}/detail/info`)
   return data
+}
+
+/** 轨迹原始 JSON 文本 */
+export async function fetchTrajectoryRawText(sessionId: string): Promise<string> {
+  const { data } = await api.get(`/trajectories/${sessionId}/detail/raw`, {
+    responseType: 'text',
+    transformResponse: value => value,
+  })
+  return data as string
 }
 
 /** 更新轨迹标注 */

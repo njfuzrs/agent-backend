@@ -9,6 +9,7 @@ import type { TrajectoryStep } from '../types/trajectory'
 interface Props {
   action: TrajectoryStep
   observation?: TrajectoryStep
+  forceExpanded?: boolean
 }
 
 const TOOL_COLORS: Record<string, string> = {
@@ -35,8 +36,9 @@ function getToolSummary(action: TrajectoryStep): string {
   return ''
 }
 
-export default function ToolCallBlock({ action, observation }: Props) {
+export default function ToolCallBlock({ action, observation, forceExpanded = false }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const isExpanded = forceExpanded || expanded
   const toolColor = TOOL_COLORS[action.tool_name || ''] || '#666'
   const summary = getToolSummary(action)
   const isError = observation?.is_error
@@ -50,18 +52,22 @@ export default function ToolCallBlock({ action, observation }: Props) {
     }}>
       {/* 标题栏 */}
       <div
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          if (!forceExpanded) {
+            setExpanded(!expanded)
+          }
+        }}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 8,
           padding: '6px 12px',
           background: `${toolColor}11`,
-          cursor: 'pointer',
+          cursor: forceExpanded ? 'default' : 'pointer',
           userSelect: 'none',
         }}
       >
-        {expanded ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
+        {isExpanded ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
         <ToolOutlined style={{ color: toolColor }} />
         <Tag color={toolColor} style={{ margin: 0 }}>{action.tool_name}</Tag>
         <Typography.Text style={{ color: '#999', fontSize: 12, flex: 1 }} ellipsis>
@@ -75,7 +81,7 @@ export default function ToolCallBlock({ action, observation }: Props) {
       </div>
 
       {/* 展开内容 */}
-      {expanded && (
+      {isExpanded && (
         <div style={{ padding: '8px 12px', background: '#1a1a1a' }}>
           {/* 工具输入 */}
           {action.tool_input && (

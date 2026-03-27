@@ -13,17 +13,22 @@ import {
 } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
+import HistoryChatView from '../components/HistoryChatView'
 import QualityRating from '../components/QualityRating'
+import RawJsonPane from '../components/RawJsonPane'
 import TagManager from '../components/TagManager'
-import Timeline from '../components/Timeline'
+import TrajectoryDebugView from '../components/TrajectoryDebugView'
+import TrajectoryReadingView from '../components/TrajectoryReadingView'
 import {
   apiBasePath,
   fetchAllTrajectorySteps,
   fetchTrajectoryHistory,
   fetchTrajectoryInfo,
   fetchTrajectoryMeta,
+  fetchTrajectoryRawText,
 } from '../services/api'
 import type { TrajectoryMeta } from '../types/trajectory'
+import { buildDetailModel } from '../utils/trajectoryDetail'
 import { formatCurrency, formatDuration, formatTokens } from '../utils/format'
 
 const EXIT_STATUS_MAP: Record<string, { color: string; label: string }> = {
@@ -37,7 +42,10 @@ export default function TrajectoryDetail() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [activeTab, setActiveTab] = useState('timeline')
+  const [activeTab, setActiveTab] = useState('reading')
+  const [showSystem, setShowSystem] = useState(false)
+  const [showThinking, setShowThinking] = useState(true)
+  const [expandTools, setExpandTools] = useState(false)
 
   const { data: meta, isLoading: metaLoading } = useQuery({
     queryKey: ['trajectory-meta', sessionId],
@@ -45,22 +53,33 @@ export default function TrajectoryDetail() {
     enabled: !!sessionId,
   })
 
+  const shouldLoadDetailData = !!sessionId && ['reading', 'history', 'debug'].includes(activeTab)
+  const shouldLoadSteps = !!sessionId && ['reading', 'debug'].includes(activeTab)
+  const shouldLoadInfo = !!sessionId && activeTab === 'debug'
+  const shouldLoadRaw = !!sessionId && activeTab === 'raw'
+
   const { data: steps, isLoading: stepsLoading } = useQuery({
     queryKey: ['trajectory-steps', sessionId],
     queryFn: () => fetchAllTrajectorySteps(sessionId!),
-    enabled: !!sessionId && activeTab === 'timeline',
-  })
-
-  const { data: info } = useQuery({
-    queryKey: ['trajectory-info', sessionId],
-    queryFn: () => fetchTrajectoryInfo(sessionId!),
-    enabled: !!sessionId && activeTab === 'info',
+    enabled: shouldLoadSteps,
   })
 
   const { data: history, isLoading: historyLoading } = useQuery({
     queryKey: ['trajectory-history', sessionId],
     queryFn: () => fetchTrajectoryHistory(sessionId!),
-    enabled: !!sessionId && activeTab === 'history',
+    enabled: shouldLoadDetailData,
+  })
+
+  const { data: info } = useQuery({
+    queryKey: ['trajectory-info', sessionId],
+    queryFn: () => fetchTrajectoryInfo(sessionId!),
+    enabled: shouldLoadInfo,
+  })
+
+  const { data: rawText, isLoading: rawLoading } = useQuery({
+    queryKey: ['trajectory-raw-text', sessionId],
+    queryFn: () => fetchTrajectoryRawText(sessionId!),
+    enabled: shouldLoadRaw,
   })
 
   if (metaLoading) {
@@ -78,15 +97,31 @@ export default function TrajectoryDetail() {
   }
 
   const statusInfo = EXIT_STATUS_MAP[meta.exit_status] || EXIT_STATUS_MAP.unknown
+  const detailModel = buildDetailModel(history || [], steps?.items || [], meta.first_prompt || '')
+  const readingLoading = (shouldLoadSteps && stepsLoading) || historyLoading
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <Space style={{ marginBottom: 4 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/trajectories')}>
-          返回列表
-        </Button>
-        <Typography.Text style={{ color: '#999' }}>{meta.session_id}</Typography.Text>
-      </Space>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <Space style={{ marginBottom: 4 }}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/trajectories')}>
+            返回列表
+          </Button>
+          <Typography.Text style={{ color: '#999' }}>{meta.session_id}</Typography.Text>
+        </Space>
+
+        <Space wrap>
+          <Tag>步骤 {meta.total_steps}</Tag>
+          <Tag color="blue">工具 {meta.tools_used.length}</Tag>
+          <Button
+            type="primary"
+            href={`${apiBasePath}/trajectories/${sessionId}/detail/raw`}
+            target="_blank"
+          >
+            下载 .traj
+          </Button>
+        </Space>
+      </div>
 
       <MetaCard meta={meta} statusInfo={statusInfo} />
 
@@ -107,51 +142,47 @@ export default function TrajectoryDetail() {
         onChange={setActiveTab}
         items={[
           {
-            key: 'timeline',
-            label: '时间线视图',
-            children: stepsLoading ? (
+            key: 'reading',
+            label: '阅读视图',
+            children: readingLoading ? (
               <Spin style={{ display: 'block', margin: '40px auto' }} />
             ) : (
-              <Timeline steps={steps?.items || []} />
+              <TrajectoryReadingView
+                model={detailModel}
+                showSystem={showSystem}
+                onShowSystemChange={setShowSystem}
+                showThinking={showThinking}
+                onShowThinkingChange={setShowThinking}
+                expandTools={expandTools}
+                onExpandToolsChange={setExpandTools}
+              />
             ),
           },
           {
             key: 'history',
-            label: 'History',
+            label: 'History 视图',
             children: historyLoading ? (
               <Spin style={{ display: 'block', margin: '40px auto' }} />
             ) : (
-              <Card size="small">
-                <pre style={{ color: '#d4d4d4', overflow: 'auto', maxHeight: 600 }}>
-                  {JSON.stringify(history, null, 2)}
-                </pre>
-              </Card>
+              <HistoryChatView history={history || []} />
             ),
           },
           {
-            key: 'info',
-            label: '统计信息',
-            children: (
-              <Card size="small">
-                <pre style={{ color: '#d4d4d4', overflow: 'auto', maxHeight: 600 }}>
-                  {JSON.stringify(info, null, 2)}
-                </pre>
-              </Card>
+            key: 'debug',
+            label: '调试视图',
+            children: shouldLoadSteps && stepsLoading ? (
+              <Spin style={{ display: 'block', margin: '40px auto' }} />
+            ) : (
+              <TrajectoryDebugView steps={steps?.items || []} history={history || []} info={info} />
             ),
           },
           {
             key: 'raw',
-            label: '下载原始文件',
-            children: (
-              <Card size="small">
-                <Button
-                  type="primary"
-                  href={`${apiBasePath}/trajectories/${sessionId}/detail/raw`}
-                  target="_blank"
-                >
-                  下载 .traj 文件 ({(meta.traj_file_size / 1024).toFixed(0)} KB)
-                </Button>
-              </Card>
+            label: '原始 JSON',
+            children: rawLoading ? (
+              <Spin style={{ display: 'block', margin: '40px auto' }} />
+            ) : (
+              <RawJsonPane content={rawText || ''} />
             ),
           },
         ]}
@@ -205,6 +236,11 @@ function MetaCard({
         <Descriptions.Item label="工作目录">
           <Typography.Text code style={{ fontSize: 12 }}>
             {meta.working_directory || '-'}
+          </Typography.Text>
+        </Descriptions.Item>
+        <Descriptions.Item label="首条输入" span={4}>
+          <Typography.Text style={{ color: '#d9d9d9', whiteSpace: 'pre-wrap' }}>
+            {meta.first_prompt || '-'}
           </Typography.Text>
         </Descriptions.Item>
         <Descriptions.Item label="Thinking">

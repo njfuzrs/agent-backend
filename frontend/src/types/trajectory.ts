@@ -62,11 +62,16 @@ export interface TrajectoryStep {
   content?: string
   is_error?: boolean
   timestamp?: string
+  _orphan?: boolean
 }
 
 export interface HistoryEntry {
-  role: 'user' | 'assistant'
+  role: 'system' | 'user' | 'assistant'
   content: string | ContentBlock[]
+  thought?: string
+  timestamp?: string
+  stop_reason?: string
+  message_type?: string
 }
 
 export interface ContentBlock {
@@ -74,9 +79,11 @@ export interface ContentBlock {
   text?: string
   name?: string
   input?: Record<string, unknown>
+  arguments?: Record<string, unknown>
   content?: string | ContentBlock[]
   id?: string
   tool_use_id?: string
+  is_error?: boolean
 }
 
 export interface DistributionItem {

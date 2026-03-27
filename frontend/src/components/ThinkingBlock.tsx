@@ -4,10 +4,12 @@ import { BulbOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
 
 interface Props {
   content: string
+  forceExpanded?: boolean
 }
 
-export default function ThinkingBlock({ content }: Props) {
+export default function ThinkingBlock({ content, forceExpanded = false }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const isExpanded = forceExpanded || expanded
 
   if (!content) return null
 
@@ -19,25 +21,29 @@ export default function ThinkingBlock({ content }: Props) {
       overflow: 'hidden',
     }}>
       <div
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          if (!forceExpanded) {
+            setExpanded(!expanded)
+          }
+        }}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 8,
           padding: '4px 12px',
           background: '#722ed111',
-          cursor: 'pointer',
+          cursor: forceExpanded ? 'default' : 'pointer',
           userSelect: 'none',
         }}
       >
-        {expanded ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
+        {isExpanded ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
         <BulbOutlined style={{ color: '#722ed1' }} />
         <Typography.Text style={{ color: '#b37feb', fontSize: 12 }}>
           Thinking ({content.length.toLocaleString()} chars)
         </Typography.Text>
       </div>
 
-      {expanded && (
+      {isExpanded && (
         <div style={{
           padding: '8px 12px',
           background: '#1a1520',
