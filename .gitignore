@@ -10,3 +10,4 @@ dist/
 .vite/
 venv/
 package-lock.json
+.mcp.json
