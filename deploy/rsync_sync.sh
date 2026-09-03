@@ -6,7 +6,8 @@ REMOTE_HOST="${TRAJ_REMOTE_HOST:-127.0.0.1}"
 REMOTE_DIR="/opt/trajectory-platform/data/traj_files/claude-code/"
 LOCAL_DIR="${TRAJ_LOCAL_DIR:-$HOME/Code/person/claude-trace/trajectories/traj/}"
 SSH_KEY="${TRAJ_SSH_KEY:-$HOME/.ssh/id_rsa}"
-UPLOAD_TOKEN="${TRAJ_UPLOAD_TOKEN:-<REDACTED_TOKEN>}"
+# 不再内置真实 token 做默认值（规划 §PR-0.5）—— 缺失即退出
+UPLOAD_TOKEN="${TRAJ_UPLOAD_TOKEN:?需要设置 TRAJ_UPLOAD_TOKEN}"
 
 echo "同步 $LOCAL_DIR → ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}"
 

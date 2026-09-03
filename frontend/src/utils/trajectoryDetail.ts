@@ -1,4 +1,4 @@
-import type { ContentBlock, HistoryEntry, TrajectoryStep } from '../types/trajectory'
+import type { ContentBlock, HistoryEntry, TrajectoryStep } from '../modules/trajectory/types/trajectory'
 
 export interface DetailTextNode {
   id: string

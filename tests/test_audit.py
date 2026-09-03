@@ -30,9 +30,22 @@ from urllib.parse import urlparse
 # 配置
 # ─────────────────────────────────────────────
 
+def _require_env(name: str) -> str:
+    """读必填环境变量。缺失即退出 —— 不再内置真实凭据做默认值（规划 §PR-0.5）。
+
+    原来这里写着生产的真实口令/token：仓库或文档一泄漏，凭据即泄漏。
+    现在必须显式提供，例如：
+        export TRAJ_AUTH_PASS=...      # 管理台口令
+        export TRAJ_UPLOAD_TOKEN=...   # 上传 token
+    """
+    val = os.environ.get(name, "")
+    if not val:
+        raise SystemExit(f"缺少必需的环境变量 {name}（不再有内置默认值，见规划 §PR-0.5）")
+    return val
+
 DEFAULT_URL = os.environ.get("TRAJ_PLATFORM_URL", "http://127.0.0.1/traj")
 AUTH_USER = os.environ.get("TRAJ_AUTH_USER", "admin")
-AUTH_PASS = os.environ.get("TRAJ_AUTH_PASS", "traj2026")
+AUTH_PASS = _require_env("TRAJ_AUTH_PASS")
 
 
 # ─────────────────────────────────────────────
