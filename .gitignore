@@ -11,3 +11,4 @@ dist/
 venv/
 package-lock.json
 .mcp.json
+.DS_Store
