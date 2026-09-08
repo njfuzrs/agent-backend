@@ -17,3 +17,7 @@ package-lock.json
 # 它是可复现产物（scripts/mvp/t4-build-env.py + mirror + resolved.jsonl 可重建），
 # 校验和已记在 meta/snapshots.jsonl 里，不入库。
 bench/v0.2-mini/tasks/*/environment/repo-snapshot.tar.gz
+
+# T3 采 P2P 的运行日志：50 个 base 串行跑数小时的 stderr 流水，
+# 结论已结构化落在 meta/p2p.jsonl 与 reports/t3-tasks.md 里，日志本身不入库。
+bench/v0.2-mini/reports/t3-p2p-run.log
