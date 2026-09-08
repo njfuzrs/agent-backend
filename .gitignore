@@ -12,3 +12,8 @@ venv/
 package-lock.json
 .mcp.json
 .DS_Store
+
+# T4 产出的仓库快照：65 份 × 平均 6.6MB = 429MB，且**含私有仓库源码**。
+# 它是可复现产物（scripts/mvp/t4-build-env.py + mirror + resolved.jsonl 可重建），
+# 校验和已记在 meta/snapshots.jsonl 里，不入库。
+bench/v0.2-mini/tasks/*/environment/repo-snapshot.tar.gz
