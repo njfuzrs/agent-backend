@@ -21,3 +21,10 @@ bench/v0.2-mini/tasks/*/environment/repo-snapshot.tar.gz
 # T3 采 P2P 的运行日志：50 个 base 串行跑数小时的 stderr 流水，
 # 结论已结构化落在 meta/p2p.jsonl 与 reports/t3-tasks.md 里，日志本身不入库。
 bench/v0.2-mini/reports/t3-p2p-run.log
+
+# T5 门禁的 harbor 跑批产物：268 个 trial × (junit XML + 日志) = 109MB，
+# 其中自证的 6 个变异体各含一份 12MB 快照硬链接副本（与 T0002 同源）。
+# 权威结论已结构化落在 meta/gate.jsonl（逐 task × 三道门禁 × ok/reason/infra），
+# 报告在 reports/t5-gate.md 与 reports/t5-selftest.md，且 `--from-runs` 可在
+# 本地产物上零成本复算 —— 跑批目录本身不入库。
+bench/v0.2-mini/reports/t5-gate/
