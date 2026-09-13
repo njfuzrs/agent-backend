@@ -47,3 +47,11 @@ bench/v0.2-mini/reports/t7-regate/run.log
 bench/v0.2-mini/reports/baseline/20*/
 bench/v0.2-mini/reports/baseline/survivors/
 bench/v0.2-mini/reports/baseline/run.log
+
+# T8 全量重跑产物：run 目录 1.3G、stage 252M —— ⛔ 不入库
+# 只留取数源（summary.json / zero-diag.json / 报告 md），它们是结论的出处
+bench/v0.2-mini/reports/t8-rerun/20*/
+bench/v0.2-mini/reports/t8-rerun/tasks/
+bench/v0.2-mini/reports/t8-rerun/run.log
+bench/v0.2-mini/reports/t8-fix/20*/
+bench/v0.2-mini/reports/t8-fix/tasks/
