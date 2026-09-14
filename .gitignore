@@ -55,3 +55,13 @@ bench/v0.2-mini/reports/t8-rerun/tasks/
 bench/v0.2-mini/reports/t8-rerun/run.log
 bench/v0.2-mini/reports/t8-fix/20*/
 bench/v0.2-mini/reports/t8-fix/tasks/
+# T8 的三个实验目录同理（exp-fix 970M / exp-concurrency-n6 14M / stage 184M）——
+# 🔴 2026-09-14 补：上面的规则只盖了 `20*/` 与 `tasks/`，这三个目录名不匹配，
+# 于是 5075 个文件一直挂在 untracked 里（`git status` 被刷爆，真正该提交的
+# 12 个小产物淹没在里面 —— 形态是「以为没东西要提交」）。
+# 结论仍在 symbol-gap*.json / docs-index.json / 报告 md 里，跑批目录不入库。
+bench/v0.2-mini/reports/t8-fix/exp-fix/
+bench/v0.2-mini/reports/t8-fix/exp-concurrency-n6/
+bench/v0.2-mini/reports/t8-fix/stage/
+# 续跑日志：与 run.log 同类（进度条 + 表格，非结论）
+bench/v0.2-mini/reports/t8-rerun/resume-*.log
