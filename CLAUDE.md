@@ -74,8 +74,7 @@ trajectory-platform/
 │   ├── audit.sh                # DB vs OSS 每日对账（cron 05:00）
 │   └── cleanup_deleted.sh      # 软删除 30 天后真删（cron 06:00）
 │   └── migrate.sh              # 生产库 schema 演进入口（current/check/stamp/plan/upgrade）
-├── tests/                  # test_boundaries.py 进 CI；其余 5 个脚本为手动验收工具
-├── .gitlab-ci.yml          # 门禁：lint / 边界测试 / 迁移链 / 前端构建
+├── tests/                  # test_boundaries.py 为门禁核心；其余 5 个脚本为手动验收工具
 └── sync.py                 # 本地 → 云端增量同步脚本
 ```
 
@@ -128,7 +127,7 @@ python3 sync.py --all    # 全量
 # 构建前端
 cd frontend && pnpm run build
 
-# 门禁自查（提交前跑一遍，与 CI 同一套检查）
+# 门禁自查（提交前跑一遍。GitLab CI 已随迁 GitHub 移除，这四条改为本地/GitHub Actions 执行）
 cd backend && ruff check . && alembic check          # lint + schema 漂移
 python -m pytest ../tests/test_boundaries.py -v      # 四条边界测试
 

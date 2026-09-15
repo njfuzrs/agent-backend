@@ -44,7 +44,9 @@ case "$ACTION" in
     ;;
   check)
     # 有漂移则非 0 退出。注意：`alembic check` 而不是 grep 生成的迁移文件 ——
-    # SQLite 下 batch 模式渲染成 batch_op.*，grep 会漏报（见 .gitlab-ci.yml 注释）。
+    # SQLite 下 render_as_batch=True 会把操作渲染成 `batch_op.add_column`，
+    # grep '^\s+op\.' 抓不到，那样写出来的是个假门禁（实测漏报过）。
+    # `alembic check` 直接比对 metadata 与库，有差异即非 0 退出。
     alembic check
     ;;
   stamp)
