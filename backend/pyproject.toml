@@ -1,0 +1,30 @@
+# 后端工具链配置。M0 只启用「能机械判定且不产生噪音」的规则集，
+# 不引入需要大规模改存量代码的规则（那会让门禁第一天就被 --no-verify 绕过）。
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = ["venv", "migrations/versions", "__pycache__"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle 错误
+    "F",   # pyflakes：未使用导入、未定义名字
+    "I",   # isort：import 排序
+    "B",   # flake8-bugbear：常见 bug 模式
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # 行长由 formatter 管，不重复报
+    "B008",  # FastAPI 的 Depends()/Query() 必须写在默认值里，与该规则天然冲突
+    # UP045：`Optional[X]` → `X | None`，存量 117 处。
+    # 故意不在 M0 修：M0 是「纯文件移动」重构，靠「路由快照逐字一致」来自证没改错东西。
+    # 往 schemas/router 里掺 117 处类型注解改写会污染这个自证 —— diff 一大，
+    # 「只移动没改逻辑」就不再可核验。留到 M1 之后单独一个 PR 批量改，那时 diff 是干净的。
+    "UP045",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["../tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"

@@ -11,3 +11,57 @@ dist/
 venv/
 package-lock.json
 .mcp.json
+.DS_Store
+
+# T4 产出的仓库快照：65 份 × 平均 6.6MB = 429MB，且**含私有仓库源码**。
+# 它是可复现产物（scripts/mvp/t4-build-env.py + mirror + resolved.jsonl 可重建），
+# 校验和已记在 meta/snapshots.jsonl 里，不入库。
+bench/v0.2-mini/tasks/*/environment/repo-snapshot.tar.gz
+
+# T3 采 P2P 的运行日志：50 个 base 串行跑数小时的 stderr 流水，
+# 结论已结构化落在 meta/p2p.jsonl 与 reports/t3-tasks.md 里，日志本身不入库。
+bench/v0.2-mini/reports/t3-p2p-run.log
+
+# T5 门禁的 harbor 跑批产物：268 个 trial × (junit XML + 日志) = 109MB，
+# 其中自证的 6 个变异体各含一份 12MB 快照硬链接副本（与 T0002 同源）。
+# 权威结论已结构化落在 meta/gate.jsonl（逐 task × 三道门禁 × ok/reason/infra），
+# 报告在 reports/t5-gate.md 与 reports/t5-selftest.md，且 `--from-runs` 可在
+# 本地产物上零成本复算 —— 跑批目录本身不入库。
+bench/v0.2-mini/reports/t5-gate/
+
+# T7 的 harbor 跑批产物（复检 + 重跑 + 基线）：与 T5 同一条理由 ——
+# 每个 trial 一份 junit XML + 日志，39 条一轮就 14MB，基线还要再来一轮。
+# 权威结论已结构化落在：
+#   reports/t7-regate/verdict.json      （复检逐条判定）
+#   reports/t7-regate/retry/*/verdict.json（flaky 归因）
+#   reports/t7-regate/netpolicy-probe.json（网络策略实测）
+#   reports/baseline/summary.json        （基线取数源，机器可读）
+#   reports/baseline-v0.2-mini.md        （成果报告）
+# 且 t7-report.py 可在本地产物上零成本复算 —— 跑批目录本身不入库。
+bench/v0.2-mini/reports/t7-regate/20*/
+bench/v0.2-mini/reports/t7-regate/retry/*/20*/
+bench/v0.2-mini/reports/t7-regate/retry/*/tasks/
+bench/v0.2-mini/reports/t7-regate/retry/*/run.log
+bench/v0.2-mini/reports/t7-regate/survivors/
+bench/v0.2-mini/reports/t7-regate/run.log
+bench/v0.2-mini/reports/baseline/20*/
+bench/v0.2-mini/reports/baseline/survivors/
+bench/v0.2-mini/reports/baseline/run.log
+
+# T8 全量重跑产物：run 目录 1.3G、stage 252M —— ⛔ 不入库
+# 只留取数源（summary.json / zero-diag.json / 报告 md），它们是结论的出处
+bench/v0.2-mini/reports/t8-rerun/20*/
+bench/v0.2-mini/reports/t8-rerun/tasks/
+bench/v0.2-mini/reports/t8-rerun/run.log
+bench/v0.2-mini/reports/t8-fix/20*/
+bench/v0.2-mini/reports/t8-fix/tasks/
+# T8 的三个实验目录同理（exp-fix 970M / exp-concurrency-n6 14M / stage 184M）——
+# 🔴 2026-09-14 补：上面的规则只盖了 `20*/` 与 `tasks/`，这三个目录名不匹配，
+# 于是 5075 个文件一直挂在 untracked 里（`git status` 被刷爆，真正该提交的
+# 12 个小产物淹没在里面 —— 形态是「以为没东西要提交」）。
+# 结论仍在 symbol-gap*.json / docs-index.json / 报告 md 里，跑批目录不入库。
+bench/v0.2-mini/reports/t8-fix/exp-fix/
+bench/v0.2-mini/reports/t8-fix/exp-concurrency-n6/
+bench/v0.2-mini/reports/t8-fix/stage/
+# 续跑日志：与 run.log 同类（进度条 + 表格，非结论）
+bench/v0.2-mini/reports/t8-rerun/resume-*.log

@@ -1,0 +1,271 @@
+/** API 客户端 */
+
+import axios from 'axios'
+import type {
+  CompareGroupDetailResponse,
+  CompareGroupListResponse,
+  CompareRadarResponse,
+  HistoryEntry,
+  CostStatsResponse,
+  DistributionResponse,
+  StatsOverviewResponse,
+  TrajectoryBatchUpdateResponse,
+  TrajectoryListResponse,
+  TrajectoryMeta,
+  TrajectoryStepsResponse,
+  TrendsResponse,
+} from '../types/trajectory'
+
+// 开发环境通过 vite proxy 转发（/api），生产环境走 /traj/api
+const isProd = import.meta.env.PROD
+export const apiBasePath = isProd ? '/traj/api/v1' : '/api/v1'
+// withCredentials：让浏览器带上 HttpOnly 会话 cookie。
+// 凭据**不再进 localStorage**（规划 §PR-0.5 第 4 条）——
+// 原实现把 Basic Auth 密码明文存在 localStorage，一个 XSS 即可读走管理员凭据。
+// 现在 token 在 HttpOnly cookie 里，JS 读不到。
+const api = axios.create({
+  baseURL: apiBasePath,
+  withCredentials: true,
+})
+
+const TRAJECTORY_STEPS_BATCH_SIZE = 200
+
+/** 登录：服务端校验后下发 HttpOnly cookie。口令只在本次请求体里出现，不落盘。 */
+export async function login(username: string, password: string): Promise<void> {
+  await api.post('/auth/login', { username, password })
+}
+
+export async function logout(): Promise<void> {
+  await api.post('/auth/logout')
+}
+
+/** 是否已登录 —— 问服务端，不再读 localStorage。 */
+export async function checkAuth(): Promise<boolean> {
+  try {
+    await api.get('/auth/me')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 轨迹列表 */
+export async function fetchTrajectories(params: Record<string, unknown>): Promise<TrajectoryListResponse> {
+  const { data } = await api.get('/trajectories', { params })
+  return data
+}
+
+/** 轨迹元数据 */
+export async function fetchTrajectoryMeta(sessionId: string): Promise<TrajectoryMeta> {
+  const { data } = await api.get(`/trajectories/${sessionId}`)
+  return data
+}
+
+/** 轨迹步骤（分页） */
+export async function fetchTrajectorySteps(
+  sessionId: string,
+  offset = 0,
+  limit = 50
+): Promise<TrajectoryStepsResponse> {
+  const { data } = await api.get(`/trajectories/${sessionId}/detail/trajectory`, {
+    params: { offset, limit },
+  })
+  return data
+}
+
+/** 轨迹步骤（自动分批拉取全部，避免单次请求过大） */
+export async function fetchAllTrajectorySteps(sessionId: string): Promise<TrajectoryStepsResponse> {
+  const firstPage = await fetchTrajectorySteps(sessionId, 0, TRAJECTORY_STEPS_BATCH_SIZE)
+  if (firstPage.total <= firstPage.items.length) {
+    return firstPage
+  }
+
+  const requests: Array<Promise<TrajectoryStepsResponse>> = []
+  for (let offset = firstPage.items.length; offset < firstPage.total; offset += TRAJECTORY_STEPS_BATCH_SIZE) {
+    requests.push(
+      fetchTrajectorySteps(
+        sessionId,
+        offset,
+        Math.min(TRAJECTORY_STEPS_BATCH_SIZE, firstPage.total - offset)
+      )
+    )
+  }
+
+  const restPages = await Promise.all(requests)
+  return {
+    total: firstPage.total,
+    offset: 0,
+    limit: firstPage.total,
+    items: [
+      ...firstPage.items,
+      ...restPages.flatMap(page => page.items),
+    ],
+  }
+}
+
+/** 轨迹 history */
+export async function fetchTrajectoryHistory(sessionId: string): Promise<HistoryEntry[]> {
+  const { data } = await api.get(`/trajectories/${sessionId}/detail/history`)
+  return data
+}
+
+/** 轨迹 info */
+export async function fetchTrajectoryInfo(sessionId: string): Promise<Record<string, unknown>> {
+  const { data } = await api.get(`/trajectories/${sessionId}/detail/info`)
+  return data
+}
+
+/** 轨迹原始 JSON 文本 */
+export async function fetchTrajectoryRawText(sessionId: string): Promise<string> {
+  const { data } = await api.get(`/trajectories/${sessionId}/detail/raw`, {
+    responseType: 'text',
+    transformResponse: value => value,
+  })
+  return data as string
+}
+
+/** 更新轨迹标注 */
+export async function updateTrajectory(sessionId: string, update: Record<string, unknown>) {
+  const { data } = await api.patch(`/trajectories/${sessionId}`, update)
+  return data
+}
+
+/** 批量更新轨迹标注 */
+export async function batchUpdateTrajectories(update: Record<string, unknown>): Promise<TrajectoryBatchUpdateResponse> {
+  const { data } = await api.patch('/trajectories/batch', update)
+  return data
+}
+
+/** 删除轨迹 */
+export async function deleteTrajectory(sessionId: string) {
+  const { data } = await api.delete(`/trajectories/${sessionId}`)
+  return data
+}
+
+/** 统计总览 */
+export async function fetchStatsOverview(params: Record<string, unknown>): Promise<StatsOverviewResponse> {
+  const { data } = await api.get('/stats/overview', { params })
+  return data
+}
+
+/** 趋势统计 */
+export async function fetchStatsTrends(params: Record<string, unknown>): Promise<TrendsResponse> {
+  const { data } = await api.get('/stats/trends', { params })
+  return data
+}
+
+/** 工具分布 */
+export async function fetchToolDistribution(params: Record<string, unknown>): Promise<DistributionResponse> {
+  const { data } = await api.get('/stats/tools', { params })
+  return data
+}
+
+/** 模型分布 */
+export async function fetchModelDistribution(params: Record<string, unknown>): Promise<DistributionResponse> {
+  const { data } = await api.get('/stats/models', { params })
+  return data
+}
+
+/** 成本分析 */
+export async function fetchCostStats(params: Record<string, unknown>): Promise<CostStatsResponse> {
+  const { data } = await api.get('/stats/cost', { params })
+  return data
+}
+
+/** 导出轨迹 zip */
+export async function exportTrajectories(sessionIds: string[]): Promise<Blob> {
+  const { data } = await api.post(
+    '/export/trajectories',
+    { session_ids: sessionIds },
+    { responseType: 'blob' }
+  )
+  return data
+}
+
+/** 导出 SFT JSONL */
+export async function exportSFT(payload: Record<string, unknown>): Promise<Blob> {
+  const { data } = await api.post('/export/sft', payload, { responseType: 'blob' })
+  return data
+}
+
+/** 对比组列表 */
+export async function fetchCompareGroups(): Promise<CompareGroupListResponse> {
+  const { data } = await api.get('/compare/groups')
+  return data
+}
+
+/** 创建对比组 */
+export async function createCompareGroup(payload: Record<string, unknown>): Promise<CompareGroupDetailResponse> {
+  const { data } = await api.post('/compare/groups', payload)
+  return data
+}
+
+/** 删除对比组 */
+export async function deleteCompareGroup(groupId: number) {
+  const { data } = await api.delete(`/compare/groups/${groupId}`)
+  return data
+}
+
+/** 对比组详情 */
+export async function fetchCompareGroupDetail(groupId: number): Promise<CompareGroupDetailResponse> {
+  const { data } = await api.get(`/compare/groups/${groupId}`)
+  return data
+}
+
+/** 添加轨迹到对比组 */
+export async function addCompareGroupItems(groupId: number, sessionIds: string[]) {
+  const { data } = await api.post(`/compare/groups/${groupId}/items`, { session_ids: sessionIds })
+  return data
+}
+
+/** 从对比组移除轨迹 */
+export async function removeCompareGroupItem(groupId: number, trajectoryId: number) {
+  const { data } = await api.delete(`/compare/groups/${groupId}/items/${trajectoryId}`)
+  return data
+}
+
+/** 雷达图数据 */
+export async function fetchCompareRadar(groupId: number): Promise<CompareRadarResponse> {
+  const { data } = await api.get(`/compare/groups/${groupId}/radar`)
+  return data
+}
+
+/** 健康检查 */
+export async function healthCheck() {
+  const { data } = await api.get('/health')
+  return data
+}
+
+/** 单条轨迹 AI 评分 */
+export async function scoreTrajectory(sessionId: string, runHeuristic = true, runLlm = false) {
+  const { data } = await api.post(`/scoring/score/${sessionId}`, null, {
+    params: { run_heuristic: runHeuristic, run_llm: runLlm },
+  })
+  return data
+}
+
+/** 批量 AI 评分 */
+export async function batchScore(payload: Record<string, unknown>) {
+  const { data } = await api.post('/scoring/batch', payload)
+  return data
+}
+
+/** 评分统计 */
+export async function fetchScoringStats() {
+  const { data } = await api.get('/scoring/stats')
+  return data
+}
+
+/** 评分详情 */
+export async function fetchScoreDetail(sessionId: string) {
+  const { data } = await api.get(`/scoring/${sessionId}`)
+  return data
+}
+
+/** 全量重新评分 */
+export async function rescoreAll(params: { run_heuristic?: boolean; run_llm?: boolean } = {}) {
+  const { data } = await api.post('/scoring/rescore-all', null, { params })
+  return data
+}
+
+export default api

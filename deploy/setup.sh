@@ -17,6 +17,22 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
+echo "=== 3.5 初始化数据库 schema ==="
+# schema 由 Alembic 接管（M0/PR-0.1）。原来靠 init_db() 的 create_all 自动建表，
+# 那条路已删除 —— 它不改已有表的列，是「生产无加列路径」那个 bug 的成因。
+#
+# ⚠️ 全新库用 upgrade；如果这台机器上已有带数据的库，改用：
+#      deploy/migrate.sh stamp
+cd $PROJECT_DIR/backend
+if [ -f "$PROJECT_DIR/backend/.env" ]; then
+  alembic upgrade head
+  alembic current
+else
+  echo "!! 未找到 backend/.env —— 跳过迁移。"
+  echo "   请先创建 .env（至少含 AUTH_PASSWORD / UPLOAD_TOKEN），再执行："
+  echo "     cd $PROJECT_DIR/backend && alembic upgrade head"
+fi
+
 echo "=== 4. 部署前端 ==="
 cd $PROJECT_DIR/frontend
 # 确保 node/pnpm 已安装
@@ -49,7 +65,7 @@ echo "后端 API: http://127.0.0.1:8900/api/v1/health"
 echo "前端构建: $PROJECT_DIR/frontend/dist/"
 echo ""
 echo "下一步："
-echo "  1. 编辑 $PROJECT_DIR/.env 设置认证密码和 upload token"
+echo "  1. 编辑 $PROJECT_DIR/backend/.env 设置 AUTH_PASSWORD 与 UPLOAD_TOKEN"
 echo "  2. 将 deploy/nginx.conf 中的 location 块追加到 Nginx 配置"
 echo "  3. systemctl restart trajectory-platform"
 echo "  4. nginx -t && systemctl reload nginx"

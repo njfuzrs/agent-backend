@@ -62,6 +62,20 @@ sync_deploy() {
     "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_BASE_DIR}/deploy/"
 }
 
+migrate_backend() {
+  # schema 演进（M0/PR-0.1）：必须在**重启之前**跑，且与重启是两个独立的失败点。
+  # 顺序不能反 —— 先重启会让新代码撞上旧 schema。
+  #
+  # 首次上线前需先执行一次 deploy/migrate.sh stamp（把生产库标记为已处于基线），
+  # 否则这里的 upgrade 会尝试 create_table 而失败。
+  echo "==> 远端执行数据库迁移"
+  ssh_cmd "cd ${REMOTE_BASE_DIR}/backend && \
+    if [ -d venv ]; then . venv/bin/activate; fi && \
+    alembic current && \
+    alembic upgrade head && \
+    alembic current"
+}
+
 restart_backend() {
   echo "==> 远端安装依赖并重启服务"
   ssh_cmd "pip3 install -r ${REMOTE_BASE_DIR}/backend/requirements.txt && systemctl restart trajectory-platform && systemctl status trajectory-platform --no-pager"
@@ -76,6 +90,7 @@ build_frontend
 sync_frontend
 sync_backend
 sync_deploy
+migrate_backend     # 迁移先于重启：先重启会让新代码撞上旧 schema
 restart_backend
 health_check
 
