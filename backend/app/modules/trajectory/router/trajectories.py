@@ -2,7 +2,7 @@
 
 import gzip
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -136,7 +136,7 @@ async def batch_update_trajectories(
     if not rows:
         raise HTTPException(status_code=404, detail="no trajectories found")
 
-    updated_at = datetime.now(UTC).isoformat()
+    updated_at = datetime.now(timezone.utc).isoformat()
     updated_ids: list[str] = []
     for row in rows:
         changed = _apply_update(row, update)
@@ -261,7 +261,7 @@ async def update_trajectory(
 
     _apply_update(traj, update)
 
-    traj.updated_at = datetime.now(UTC).isoformat()
+    traj.updated_at = datetime.now(timezone.utc).isoformat()
     await db.commit()
     return {"status": "updated", "session_id": session_id}
 
@@ -274,7 +274,7 @@ async def delete_trajectory(session_id: str, db: AsyncSession = Depends(get_db))
     """
     traj = await _get_traj_or_404(session_id, db)
 
-    traj.deleted_at = datetime.now(UTC).isoformat()
+    traj.deleted_at = datetime.now(timezone.utc).isoformat()
     await db.commit()
     return {"status": "soft_deleted", "session_id": session_id, "recoverable_until": "30天"}
 

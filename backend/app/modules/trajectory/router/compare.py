@@ -2,7 +2,7 @@
 
 import json
 from collections import Counter, defaultdict
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -65,7 +65,7 @@ async def create_compare_group(
         name=payload.name.strip(),
         description=payload.description.strip(),
         task_prompt=payload.task_prompt.strip(),
-        created_at=datetime.now(UTC).isoformat(),
+        created_at=datetime.now(timezone.utc).isoformat(),
     )
     db.add(group)
     await db.commit()

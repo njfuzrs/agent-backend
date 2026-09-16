@@ -3,7 +3,10 @@
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+# 必须与**生产服务器**的解释器一致（实测 Python 3.10.12），不是开发机的版本。
+# 写 py311 时 ruff 不会拦 `from datetime import UTC`（3.11+ 才有的别名），
+# 本地 3.14 跑得通、生产 3.10 直接 ImportError 起不来 —— 2026-09-16 真实故障。
+target-version = "py310"
 exclude = ["venv", "migrations/versions", "__pycache__"]
 
 [tool.ruff.lint]

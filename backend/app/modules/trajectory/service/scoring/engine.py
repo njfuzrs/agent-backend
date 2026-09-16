@@ -3,7 +3,7 @@
 import gzip
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,7 +151,7 @@ def _persist_result(traj: Trajectory, result: ScoringResult) -> None:
     traj.ai_quality_status = result.ai_quality_status
     traj.ai_grade = result.ai_grade
     traj.score_version = result.score_version
-    traj.scored_at = datetime.now(UTC).isoformat()
+    traj.scored_at = datetime.now(timezone.utc).isoformat()
 
     if result.rule:
         traj.rule_score = result.rule.rule_score

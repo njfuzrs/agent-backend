@@ -4,7 +4,7 @@ import gzip
 import io
 import json
 import zipfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -502,7 +502,7 @@ def _parse_json_list(value: str | None) -> list[str]:
 
 
 def _build_sft_filename(format_name: str) -> str:
-    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return f"traj-sft-{format_name}-{timestamp}.jsonl"
 
 

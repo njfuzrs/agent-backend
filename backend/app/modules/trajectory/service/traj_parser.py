@@ -1,7 +1,7 @@
 """.traj 文件解析服务：从 .traj JSON 中提取元数据写入数据库"""
 
 import json
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 # 统一使用东八区本地时间存储，确保不同来源的时间可比较
@@ -38,7 +38,7 @@ def parse_traj_content(content: bytes, tool_source: str = "claude-code") -> dict
 
     total_steps = metadata.get("total_steps", 0) or len(trajectory)
 
-    now_utc = datetime.now(UTC).isoformat()
+    now_utc = datetime.now(timezone.utc).isoformat()
 
     return {
         "session_id": session_id,
