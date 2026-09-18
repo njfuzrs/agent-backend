@@ -21,7 +21,7 @@
 - 26 列在 `model.py` 里**全部**有等价的 Python `default=`（tool_source="claude-code"、
   tokens_sent=0、tags="[]" …），清掉库侧后新插入的行拿到的值逐字不变。
 - 写入路径**全部**走 ORM：`grep -riE "insert into|update .* set"` 在 app/ 下无命中；
-  `sync.py` / `pull.py` 只走 HTTP API，不直连库；crontab 里没有直写库的任务。
+  采集侧客户端只走 HTTP API，不直连库；crontab 里没有直写库的任务。
   所以不存在「绕过 ORM 的原生 INSERT 依赖库侧默认值」这种情况。
 - 只改列的默认值元数据，**不动任何已有行**（`ALTER COLUMN ... DROP DEFAULT` 不重写数据）。
 
