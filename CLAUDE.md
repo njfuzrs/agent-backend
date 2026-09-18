@@ -16,7 +16,8 @@ trajectory-platform 是 Agent 轨迹数据存储分析平台，用于云端存�
 - 本地轨迹数据：`~/Code/person/claude-trace/trajectories/sessions/`
   - 按会话维度存储：`sessions/{session_id}/session.traj`、`raw.jsonl`、`events.jsonl`
 - 采集方式：HTTP 代理（proxy.py）+ Claude Hooks（collector.py）双通道
-- 数据流向：`claude-trace 采集 → sessions/{sid}/ → 会话结束自动上传 / sync.py 批量同步 → trajectory-platform 云端存储`
+- 数据流向：`claude-trace 采集 → sessions/{sid}/ → uploader 自动上传 / sync.py 批量补传（均在 claude-trace 仓）→ 本平台云端存储`
+- 分析侧入湖：公开仓 agent-traj-bench 的 `pipeline/s0/s0-pull.py`（云端 → 本地 `data/pulled_sessions/`，gitignore）
 
 ## 技术栈
 
@@ -74,8 +75,8 @@ trajectory-platform/
 │   ├── audit.sh                # DB vs OSS 每日对账（cron 05:00）
 │   └── cleanup_deleted.sh      # 软删除 30 天后真删（cron 06:00）
 │   └── migrate.sh              # 生产库 schema 演进入口（current/check/stamp/plan/upgrade）
-├── tests/                  # test_boundaries.py 为门禁核心；其余 5 个脚本为手动验收工具
-└── sync.py                 # 本地 → 云端增量同步脚本
+├── scripts/                # 服务侧运维脚本（现仅 backfill_sid_code.sh，清洗链路已迁出）
+└── tests/                  # test_boundaries.py 为门禁核心；其余 5 个脚本为手动验收工具
 ```
 
 ## 架构要点
@@ -96,11 +97,11 @@ trajectory-platform/
 - 前端组件命名使用 PascalCase
 - 前端包管理器使用 pnpm，不要用 npm 或 yarn
 - 数据交换统一使用 JSON 格式
-- 不要生成零散的文档文件，文档集中在 docs/ 目录
+- 不要生成零散的文档文件，文档集中在 ../docs-research/trajectory-platform/ 目录
 
 ## 部署信息
 
-详见 [docs/deployment.md](docs/deployment.md)，包含：
+详见 [../docs-research/trajectory-platform/deployment.md](../docs-research/trajectory-platform/deployment.md)，包含：
 - 访问地址与认证信息
 - 服务器环境（PostgreSQL 14 + OSS + Nginx）
 - 目录结构与 .env 配置
@@ -119,10 +120,6 @@ cd backend && source venv/bin/activate && uvicorn app.main:app --reload --port 8
 
 # 本地开发 — 前端（自动代理 /api → localhost:8900）
 cd frontend && pnpm dev
-
-# 同步轨迹数据到云端
-python3 sync.py          # 增量
-python3 sync.py --all    # 全量
 
 # 构建前端
 cd frontend && pnpm run build

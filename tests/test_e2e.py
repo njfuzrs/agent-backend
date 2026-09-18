@@ -32,7 +32,7 @@ import time
 import uuid
 from pathlib import Path
 
-# 复用 sync.py 的上传逻辑（stdlib only）
+# 与 claude-trace sync.py / uploader.py 相同的上传协议（stdlib，本文件自包含）
 import http.client
 from urllib.parse import urlparse
 
