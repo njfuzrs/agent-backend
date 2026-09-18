@@ -74,6 +74,7 @@ trajectory-platform/
 │   ├── audit.sh                # DB vs OSS 每日对账（cron 05:00）
 │   └── cleanup_deleted.sh      # 软删除 30 天后真删（cron 06:00）
 │   └── migrate.sh              # 生产库 schema 演进入口（current/check/stamp/plan/upgrade）
+├── scripts/                # 服务侧运维脚本（现仅 backfill_sid_code.sh，清洗链路已迁出）
 ├── tests/                  # test_boundaries.py 为门禁核心；其余 5 个脚本为手动验收工具
 └── sync.py                 # 本地 → 云端增量同步脚本
 ```
@@ -96,11 +97,11 @@ trajectory-platform/
 - 前端组件命名使用 PascalCase
 - 前端包管理器使用 pnpm，不要用 npm 或 yarn
 - 数据交换统一使用 JSON 格式
-- 不要生成零散的文档文件，文档集中在 docs/ 目录
+- 不要生成零散的文档文件，文档集中在 ../docs-research/trajectory-platform/ 目录
 
 ## 部署信息
 
-详见 [docs/deployment.md](docs/deployment.md)，包含：
+详见 [../docs-research/trajectory-platform/deployment.md](../docs-research/trajectory-platform/deployment.md)，包含：
 - 访问地址与认证信息
 - 服务器环境（PostgreSQL 14 + OSS + Nginx）
 - 目录结构与 .env 配置
