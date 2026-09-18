@@ -76,6 +76,7 @@ trajectory-platform/
 │   └── migrate.sh              # 生产库 schema 演进入口（current/check/stamp/plan/upgrade）
 ├── scripts/                # 服务侧运维脚本（现仅 backfill_sid_code.sh，清洗链路已迁出）
 ├── tests/                  # test_boundaries.py 为门禁核心；其余 5 个脚本为手动验收工具
+├── pull.py                 # 云端 → 本地增量拉取
 └── sync.py                 # 本地 → 云端增量同步脚本
 ```
 
