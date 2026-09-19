@@ -1,0 +1,42 @@
+# 防复发门禁。装一次：pre-commit install
+# 全量跑：pre-commit run --all-files
+#
+# gitleaks 用系统二进制（brew install gitleaks），不用官方 remote hook ——
+# 后者需从源码 go install，构建时依赖 proxy.golang.org，网络不通即整个门禁失效。
+# 命令用现行 `gitleaks git --pre-commit --staged`；不要写已弃用的旧子命令。
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.7
+    hooks:
+      - id: ruff
+        args: [--fix, --config, backend/pyproject.toml]
+        files: ^backend/
+        # pyproject 的 exclude 对「显式传入的文件」无效；hook 会把 versions 喂进去。
+        exclude: ^backend/migrations/versions/
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        # Markdown 行尾两空格是硬换行语法，裁掉会改变渲染
+        exclude: \.md$
+      - id: check-yaml
+      - id: check-json
+        # Vite 的 tsconfig 是 JSONC（有 /* */ 注释），标准 JSON 解析会失败
+        exclude: (^|/)tsconfig.*\.json$
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: gitleaks（密钥扫描）
+        entry: gitleaks git --pre-commit --staged --redact --verbose
+        language: system
+        pass_filenames: false

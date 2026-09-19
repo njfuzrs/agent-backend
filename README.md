@@ -94,4 +94,4 @@ bash scripts/backfill_sid_code.sh --dry-run
 
 ## 许可
 
-拟采用 MIT。LICENSE 随治理文件一并补齐。
+[MIT](LICENSE)。贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全上报见 [SECURITY.md](SECURITY.md)。

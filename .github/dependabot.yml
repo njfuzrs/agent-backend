@@ -1,0 +1,30 @@
+# Dependabot 版本更新。
+# pip 锁在 backend/（根目录没有 requirements.txt）；
+# 前端锁文件是 frontend/pnpm-lock.yaml，ecosystem 仍写 npm（GitHub 对 pnpm 走这条）；
+# github-actions 钉在仓库根。
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"

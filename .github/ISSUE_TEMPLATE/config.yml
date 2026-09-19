@@ -1,0 +1,12 @@
+# 关掉空白 issue：模板已覆盖 bug / 功能。
+# 安全问题走私密通道，不要开公开 issue。
+blank_issues_enabled: false
+
+contact_links:
+  - name: 🔒 安全漏洞（请勿开公开 issue）
+    url: https://github.com/njfuzrs/agent-backend/security/advisories/new
+    about: 按 SECURITY.md 走 GitHub 私密上报（Security → Report a vulnerability）。
+
+  - name: 采集端上传协议
+    url: https://github.com/njfuzrs/claude-trace/blob/main/docs/upload-protocol.md
+    about: 本仓是接收端。gzip / X-Content-SHA256 / X-Upload-Token / multipart 以采集端文档为准。

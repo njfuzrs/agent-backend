@@ -1,0 +1,54 @@
+name: 功能建议
+description: 建议一个新功能或改进
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提议前请先看 README 的「现在有什么 / 还没有什么」。
+        flag / policy / 事件 / 成本 / `require_device` 真鉴权是路线图，**还没交付**；
+        把它们写成「已经有了但文档漏了」会误导后来人。
+
+        贴合本仓定位的提议更容易被采纳：企业级 Agent **后端**（控制面 + 数据面同仓），
+        轨迹只是模块一。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题
+      description: 先说问题，不要直接说方案
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 设想的做法
+    validations:
+      required: false
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: 主要落在哪个模块
+      options:
+        - 轨迹（已交付，修/补）
+        - identity / require_device（M1）
+        - flag（M2）
+        - policy（M3）
+        - event（M4）
+        - cost（M5）
+        - 部署 / CI / 治理
+        - 都不属于 / 不确定
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: 请先确认
+      options:
+        - label: 我知道生产路径 / `/traj/` 前缀是冻结区，不接受只为和仓名对齐而改它们的 PR（见 CONTRIBUTING.md）
+          required: true
+        - label: 我知道控制面不得复用 X-Upload-Token（见 SECURITY.md）
+          required: true

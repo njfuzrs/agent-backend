@@ -1,0 +1,86 @@
+# 无 .env 的干净 runner 也能绿。
+# AUTH_PASSWORD / UPLOAD_TOKEN 无默认值，缺了 app.core.config 会 SystemExit；
+# alembic check 还要先有库。ruff / pytest 不在 backend/requirements.txt。
+# 根目录没有 pyproject.toml，ruff 必须 cd backend 才能吃到 target-version = py310。
+#
+# on.push.branches 一开始就写 [main]（决策 E）。不要先写 master 再改。
+# 五份手动 e2e 不进 CI。private 阶段不用需要许可证的第三方 Action。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# 明显假值，不要用生产形态。只为让 pydantic 能 import。
+env:
+  AUTH_PASSWORD: ci-not-a-secret
+  UPLOAD_TOKEN: ci-not-a-secret
+  DATABASE_URL: sqlite+aiosqlite:///./ci.db
+
+jobs:
+  lint-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - run: python -m pip install --upgrade pip
+      - run: pip install ruff -r backend/requirements.txt
+      - name: ruff（必须在 backend/ 下，否则吃不到 pyproject.toml）
+        working-directory: backend
+        run: ruff check .
+      - name: alembic check（空库要先 upgrade）
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          alembic check
+
+  test-boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - run: pip install -r backend/requirements.txt pytest
+      - run: python -m pytest tests/test_boundaries.py -v
+        # 7 个 test_；其中 3 个会 import app.main，依赖上面的 AUTH_* env
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc -b
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # 仓先 private：官方 GitHub Action 对私有仓要许可证。
+      # private 阶段用 CLI 二进制（免费）；转 public 后再换 Action 也可以。
+      - name: gitleaks（CLI，不依赖许可证；资产名是 linux_x64，不要用 uname）
+        run: |
+          VER=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks git --redact --log-opts='--all'
