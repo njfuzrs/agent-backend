@@ -3,20 +3,21 @@
 #
 # 背景：sid-code 的自动上传只挂在 SessionEnd（collector.ts:1783），而实测绝大多数
 # 进程走不到 SessionEnd（Ctrl-C / kill / 关终端都不触发），导致本地会话从未上传。
-# 详见 docs-research/sid-code/bugfixes/todo/ 下的分析文档。
 #
 # 本脚本按 uploader.ts 的协议（gzip + X-Content-SHA256 + multipart）逐文件补传。
 # 只读本地数据，不删除任何东西；已在云端存在的 session 默认跳过。
 #
 # 用法：
-#   scripts/backfill_sid_code.sh                 # 补传全部未上传会话
+#   TRAJ_UPLOAD_URL=https://www.sid-code.cc/traj scripts/backfill_sid_code.sh
 #   scripts/backfill_sid_code.sh --dry-run       # 只列出将要传什么，不实际传
 #   scripts/backfill_sid_code.sh --force         # 云端已存在也重传（服务端幂等覆盖）
 #   TRAJ_SESSIONS_DIR=... TRAJ_UPLOAD_URL=... TRAJ_UPLOAD_TOKEN=... scripts/backfill_sid_code.sh
+#
+# TRAJ_UPLOAD_URL 无默认值（opt-in）。示例：https://www.sid-code.cc/traj 或你的自建端点。
 set -uo pipefail
 
 SESSIONS_DIR="${TRAJ_SESSIONS_DIR:-$HOME/.sid-code/trajectories/sessions}"
-UPLOAD_URL="${TRAJ_UPLOAD_URL:-https://www.sid-code.cc/traj}"
+UPLOAD_URL="${TRAJ_UPLOAD_URL:-}"
 TOKEN="${TRAJ_UPLOAD_TOKEN:-}"
 TOOL_SOURCE="${TRAJ_TOOL_SOURCE:-sid-code}"
 MAX_RETRIES="${TRAJ_MAX_RETRIES:-3}"
@@ -49,6 +50,13 @@ except Exception: print('')
 fi
 if [[ -z "$TOKEN" ]]; then
   echo "错误：缺少上传 token。设置 TRAJ_UPLOAD_TOKEN 或在 ~/.sid-code/settings.json 的 trace.upload.token 配置" >&2
+  exit 1
+fi
+
+if [[ -z "$UPLOAD_URL" ]]; then
+  echo "错误：未设置 TRAJ_UPLOAD_URL。" >&2
+  echo "示例：export TRAJ_UPLOAD_URL=https://www.sid-code.cc/traj" >&2
+  echo "或指向你的自建接收端（不要带尾斜杠）。" >&2
   exit 1
 fi
 

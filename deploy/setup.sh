@@ -69,4 +69,4 @@ echo "  1. 编辑 $PROJECT_DIR/backend/.env 设置 AUTH_PASSWORD 与 UPLOAD_TOKE
 echo "  2. 将 deploy/nginx.conf 中的 location 块追加到 Nginx 配置"
 echo "  3. systemctl restart trajectory-platform"
 echo "  4. nginx -t && systemctl reload nginx"
-echo "  5. 访问 http://127.0.0.1/traj/"
+echo "  5. 访问 http://<your-host>/traj/（见你的 nginx 反代）"

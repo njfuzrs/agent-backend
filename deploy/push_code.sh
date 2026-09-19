@@ -3,7 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REMOTE_USER="${TRAJ_REMOTE_USER:-root}"
-REMOTE_HOST="${TRAJ_REMOTE_HOST:-127.0.0.1}"
+# TRAJ_SSH_KEY 是密钥文件，不能代替 host。未设目标主机则退出，避免把生产公网 IP 写进默认值。
+if [[ -z "${TRAJ_REMOTE_HOST:-}" ]]; then
+  echo "未设置 TRAJ_REMOTE_HOST（目标主机）。请 export TRAJ_REMOTE_HOST=<host> 后再跑。" >&2
+  echo "TRAJ_SSH_KEY 只用于指定密钥文件，不能代替 host。" >&2
+  exit 1
+fi
+REMOTE_HOST="$TRAJ_REMOTE_HOST"
+# 生产路径与开源仓名分叉是有意的：GitHub 仓是 agent-backend，线上目录仍是 /opt/trajectory-platform。
 REMOTE_BASE_DIR="${TRAJ_REMOTE_BASE_DIR:-/opt/trajectory-platform}"
 SSH_KEY="${TRAJ_SSH_KEY:-}"
 SSH_OPTS="-o StrictHostKeyChecking=no"

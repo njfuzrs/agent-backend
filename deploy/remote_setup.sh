@@ -14,7 +14,7 @@ echo "清理完成"
 echo "=== 2. 配置 systemd 服务 ==="
 cat > /etc/systemd/system/trajectory-platform.service << 'SVCEOF'
 [Unit]
-Description=Trajectory Platform Backend (FastAPI)
+Description=Agent Backend
 After=network.target
 
 [Service]
@@ -78,13 +78,13 @@ if [ -f /etc/nginx/sites-enabled/default ]; then
     if ! grep -q '/traj/' /etc/nginx/sites-enabled/default 2>/dev/null; then
         # 在 default server 块的最后一个 } 之前插入 location 块
         sed -i '/^}$/i \
-    # Trajectory Platform 前端\
+    # Agent Backend 前端\
     location /traj/ {\
         alias /opt/trajectory-platform/frontend/dist/;\
         try_files $uri $uri/ /traj/index.html;\
     }\
 \
-    # Trajectory Platform API\
+    # Agent Backend API\
     location /traj/api/ {\
         proxy_pass http://127.0.0.1:8900/api/;\
         proxy_set_header Host $host;\
@@ -128,5 +128,5 @@ echo "Nginx 反代:"
 curl -sf http://127.0.0.1/traj/api/v1/health && echo ""
 echo ""
 echo "=== 部署完成 ==="
-echo "外网访问: http://127.0.0.1/traj/"
-echo "API 地址: http://127.0.0.1/traj/api/v1/health"
+echo "外网访问: 见你的 nginx 反代（http://<your-host>/traj/）"
+echo "API 地址: http://<your-host>/traj/api/v1/health"

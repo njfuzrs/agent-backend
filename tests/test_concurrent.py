@@ -49,7 +49,8 @@ def _require_env(name: str) -> str:
         raise SystemExit(f"缺少必需的环境变量 {name}（不再有内置默认值，见规划 §PR-0.5）")
     return val
 
-DEFAULT_URL = os.environ.get("TRAJ_PLATFORM_URL", "http://127.0.0.1/traj")
+# 无生产 IP 默认值。未设 TRAJ_PLATFORM_URL 时仅回环，打生产请显式传 --url 或环境变量。
+DEFAULT_URL = os.environ.get("TRAJ_PLATFORM_URL", "http://127.0.0.1:8900")
 UPLOAD_TOKEN = _require_env("TRAJ_UPLOAD_TOKEN")
 AUTH_USER = os.environ.get("TRAJ_AUTH_USER", "admin")
 AUTH_PASS = _require_env("TRAJ_AUTH_PASS")
@@ -329,7 +330,8 @@ def run_concurrent_test(base_url: str, num_sessions: int, concurrency: int):
 
 def main():
     parser = argparse.ArgumentParser(description="并发上传测试")
-    parser.add_argument("--url", default=DEFAULT_URL, help="服务端地址")
+    parser.add_argument("--url", default=DEFAULT_URL,
+                        help="服务端地址（默认 http://127.0.0.1:8900，或环境变量 TRAJ_PLATFORM_URL）")
     parser.add_argument("--sessions", type=int, default=50, help="测试会话数量")
     parser.add_argument("--concurrency", type=int, default=50, help="并发线程数")
     args = parser.parse_args()

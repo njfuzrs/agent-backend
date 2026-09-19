@@ -64,7 +64,7 @@ function App() {
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ display: 'flex', alignItems: 'center', padding: '0 24px' }}>
         <Typography.Title level={4} style={{ color: '#fff', margin: '0 24px 0 0', whiteSpace: 'nowrap' }}>
-          Trajectory Platform
+          Agent Backend
         </Typography.Title>
         <Menu
           theme="dark"

@@ -1,5 +1,7 @@
+# 生产路径与开源仓名分叉是有意的：GitHub 仓是 agent-backend，
+# 本 unit 文件名、WorkingDirectory、EnvironmentFile 仍用 /opt/trajectory-platform。
 [Unit]
-Description=Trajectory Platform Backend (FastAPI)
+Description=Agent Backend
 After=network.target
 
 [Service]

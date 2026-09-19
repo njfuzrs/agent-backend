@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="企业级 Agent 控制平台 API",
+    title="企业级 Agent 后端 API",
     version="1.0.0",
     lifespan=lifespan,
 )
