@@ -4,13 +4,17 @@
 # `.env` —— 这些文件从未入库、也在 .gitignore 中，但扫描器不看 git 状态。
 # 不排除的话每个开发者本地都是常红，常红的门禁等于没有门禁。
 #
-# ⚠️ 这里只排除「按设计不会入库」的路径。任何入库文件都必须照默认规则扫。
+# ⚠️ 这里只排除「按设计不会入库」的路径，以及文档里明确保留的占位符。
+# 任何入库的真凭据都必须照默认规则扫。
 # `frontend/pnpm-lock.yaml` 若误报再加，现在不加。
+#
+# 语法：gitleaks 8.25+ 用 [[allowlists]]（复数）。8.30 禁止与已弃用的
+# [allowlist] 混写，混写会直接 Failed to load config。
 
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "本机专用、按设计不入库的文件"
 paths = [
     # 本地/生产凭据。根 .gitignore 已排除，从未作为开源口径入库
@@ -21,4 +25,18 @@ paths = [
     '''^frontend/node_modules/''',
     # 本地数据目录（轨迹文件，可能含用户粘贴的凭据）
     '''^data/''',
+]
+
+# tests/README.md 的 `curl -u admin:your-password` 是阶段 2 明确保留的占位符
+# （方案原文：Basic Auth 示例保持占位符，不要换成真值）。
+# 默认 curl-auth-user 规则只放过 `user:password` / `user:changeme`，对不上
+# `your-password`。regexTarget 默认匹配提取出的 secret，不是整行 curl。
+# condition=AND：必须同时是这个文件 + 这一条占位符，避免把同名口令全局放行。
+[[allowlists]]
+description = "tests/README.md 的 curl -u 占位符 admin:your-password（阶段 2 明确保留，不是真凭据）"
+condition = "AND"
+regexTarget = "secret"
+paths = [ '''^tests/README\.md$''' ]
+regexes = [
+    '''(?i)^admin:your-password$''',
 ]
