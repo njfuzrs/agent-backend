@@ -23,6 +23,10 @@
 - 服务侧补传 `scripts/backfill_sid_code.sh` 的 `TRAJ_UPLOAD_URL` 改为 opt-in（无默认值）。
 - `.env.example` 与部署脚本去掉公网 IP 默认值；目标主机必须显式设置 `TRAJ_REMOTE_HOST`。
 
+### 修复
+
+- 边界测试遍历路由时兼容 FastAPI 0.141+ 的 `_IncludedRouter`（不再把冻结区误报成端点消失）。
+
 ### 说明
 
 - 生产路径 `/opt/trajectory-platform`、unit 文件名、nginx `/traj/` **保持原样**。

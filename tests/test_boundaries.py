@@ -114,7 +114,7 @@ def test_control_plane_module_does_not_import_data_plane_module():
 # ② 每个 /ctl/ 端点必须挂 require_device
 # ---------------------------------------------------------------------------
 def test_all_control_endpoints_require_device():
-    """遍历 FastAPI app.routes，路径含 /ctl/ 且依赖链里没有 require_device 的，列出并失败。
+    """遍历已挂载路由，路径含 /ctl/ 且依赖链里没有 require_device 的，列出并失败。
 
     这条防的是「新加端点忘了挂鉴权」，是最容易发生的一类事故 ——
     特征是代码 review 看不出来（每个文件单独看都正常）。
@@ -126,15 +126,13 @@ def test_all_control_endpoints_require_device():
     from app.main import app
 
     offenders = []
-    for route in app.routes:
-        path = getattr(route, "path", "")
+    for path, methods, dependant in _iter_app_routes(app):
         if "/ctl/" not in path:
             continue
-        deps = getattr(getattr(route, "dependant", None), "dependencies", []) or []
+        deps = getattr(dependant, "dependencies", []) or []
         found = any(getattr(d, "call", None) is require_device for d in _flatten_deps(deps))
         if not found:
-            methods = sorted(getattr(route, "methods", []) or [])
-            offenders.append(f"{','.join(methods)} {path}")
+            offenders.append(f"{','.join(sorted(methods))} {path}")
 
     assert not offenders, (
         "以下控制面端点没有挂 require_device（规划 §2.1，无例外）:\n  "
@@ -147,6 +145,32 @@ def _flatten_deps(deps):
     for d in deps:
         yield d
         yield from _flatten_deps(getattr(d, "dependencies", []) or [])
+
+
+def _iter_app_routes(app):
+    """产出 (path, methods, dependant)。
+
+    FastAPI ≤0.140 把 include_router 摊平到 app.routes（APIRoute 带 path）。
+    0.141+（Starlette 1.6）改成 _IncludedRouter 延迟展开，顶层没有 path，
+    必须走 effective_candidates() 才能看到真实 URL。门禁必须两种都认，
+    否则 CI 装到新 FastAPI 会把冻结区误报成「端点消失」。
+    """
+    for node in app.routes:
+        yield from _iter_route_node(node)
+
+
+def _iter_route_node(node):
+    """递归展开一层路由节点（含 0.141 的嵌套 include）。"""
+    effective = getattr(node, "effective_candidates", None)
+    if callable(effective):
+        for child in effective():
+            yield from _iter_route_node(child)
+        return
+    path = getattr(node, "path", None)
+    if not path:
+        return
+    methods = getattr(node, "methods", None) or []
+    yield path, methods, getattr(node, "dependant", None)
 
 
 # ---------------------------------------------------------------------------
@@ -250,11 +274,8 @@ def test_frozen_routes_exist():
     from app.main import app
 
     actual = set()
-    for route in app.routes:
-        path = getattr(route, "path", None)
-        if not path:
-            continue
-        for m in getattr(route, "methods", []) or []:
+    for path, methods, _ in _iter_app_routes(app):
+        for m in methods:
             actual.add((path, m))
 
     missing = [f"{m} {p}" for p, m in FROZEN_ROUTES if (p, m) not in actual]
@@ -272,10 +293,10 @@ def test_upload_session_file_uses_upload_token():
     from app.core.auth.data_plane import verify_upload_token
     from app.main import app
 
-    for route in app.routes:
-        if getattr(route, "path", "") != "/api/v1/upload/session-file":
+    for path, _methods, dependant in _iter_app_routes(app):
+        if path != "/api/v1/upload/session-file":
             continue
-        deps = getattr(getattr(route, "dependant", None), "dependencies", []) or []
+        deps = getattr(dependant, "dependencies", []) or []
         if any(getattr(d, "call", None) is verify_upload_token for d in _flatten_deps(deps)):
             return
         pytest.fail("/api/v1/upload/session-file 不再使用 verify_upload_token 鉴权")
