@@ -72,7 +72,7 @@ ssh_cmd() {
 
 stage_remote() {
   echo "==> 暂存到 ${STAGE} （不直接写 ${REMOTE_BASE_DIR}）"
-  ssh_cmd "mkdir -p $(printf '%q' "$STAGE")"
+  ssh_cmd "mkdir -p $(printf '%q' "$STAGE")/frontend/dist $(printf '%q' "$STAGE")/backend $(printf '%q' "$STAGE")/deploy"
   rsync_cmd --delete \
     "$ROOT_DIR/frontend/dist/" \
     "${REMOTE_USER}@${REMOTE_HOST}:${STAGE}/frontend/dist/"
