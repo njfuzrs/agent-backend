@@ -1,0 +1,287 @@
+# GitHub 合入即发（PR-CD-1）。
+#
+# 触发：CI（name: CI）在 main 的 push 上成功 → 本 workflow。
+# workflow_run 跑的是默认分支上这份 yaml，不是刚合入那个 SHA 里的 yaml。
+# github.sha 在 workflow_run 里是默认分支当前头，不一定等于刚绿的那次 CI。
+# 必须用 github.event.workflow_run.head_sha。
+#
+# 红线（合入 main 自动部署设计 §1 / §5.3 / 生产目录文 §9）：
+#   - on 不准有 pull_request（公开仓 fork 不能看见 production secret）
+#   - 不把 AUTH_PASSWORD / UPLOAD_TOKEN / SESSION_SECRET / DATABASE_URL / OSS AK 放进 GitHub
+#   - 不 mv /opt、不改 nginx、不覆盖 systemd unit；只 ssh 调 deploy/release.sh
+#   - StrictHostKeyChecking 必须 yes，known_hosts 来自 Environment secret
+#   - 冒烟 URL 永远是 https://www.sid-code.cc/traj/ ；IP 通道用 DEPLOY_HOST，不写进仓库默认值
+
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "要发布的 git SHA（空则当前 ref 的 HEAD）"
+        required: false
+
+permissions:
+  contents: read
+  deployments: write
+  actions: read
+  checks: read
+
+concurrency:
+  group: production-agent-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >
+      github.repository == 'njfuzrs/agent-backend' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: production
+      url: https://www.sid-code.cc/traj/
+    env:
+      REF: ${{ github.event.inputs.sha || github.event.workflow_run.head_sha || github.sha }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+    steps:
+      - name: 校验 Environment secret 齐
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?缺 DEPLOY_HOST}"
+          : "${DEPLOY_USER:?缺 DEPLOY_USER}"
+          : "${DEPLOY_SSH_KEY:?缺 DEPLOY_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?缺 DEPLOY_KNOWN_HOSTS}"
+          echo "REF=$REF user=$DEPLOY_USER"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.REF }}
+          persist-credentials: false
+
+      - name: 解析 SHA 并打印
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          echo "SHA=$SHA"
+          git log -1 --format='%H %an %s'
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+
+      - name: 确认该 SHA 的 CI 已绿
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.error, urllib.request
+
+          sha = os.environ["SHA"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          event = os.environ.get("GITHUB_EVENT_NAME", "")
+          needed = {"lint-backend", "test-backend", "frontend", "secrets"}
+          url = f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs?per_page=100"
+          req = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  data = json.load(resp)
+          except urllib.error.HTTPError as exc:
+              raise SystemExit(f"读 check-runs 失败 HTTP {exc.code}") from exc
+
+          latest = {}
+          for run in data.get("check_runs", []):
+              name = run.get("name")
+              if name in needed:
+                  latest[name] = run
+          missing = needed - set(latest)
+          if missing:
+              if event == "workflow_run":
+                  print("workflow_run：check-runs 尚未回写也继续（CI 已 gated）缺", sorted(missing))
+              else:
+                  raise SystemExit(f"缺少 CI check: {sorted(missing)}")
+          else:
+              bad = [
+                  n
+                  for n, r in latest.items()
+                  if r.get("conclusion") != "success"
+              ]
+              if bad:
+                  detail = ", ".join(
+                      f"{n}={latest[n].get('conclusion')}" for n in bad
+                  )
+                  raise SystemExit(f"CI 未全绿: {detail}")
+              print("CI checks green:", ", ".join(sorted(latest)))
+          PY
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: 构建前端
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm build
+          test -f dist/index.html
+          grep -q '/traj/' dist/index.html
+          echo -n 'dist js: '
+          grep -oE 'index-[^"[:space:]]+\.js' dist/index.html | head -5
+
+      - name: 写入 SSH 密钥与 known_hosts
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+          grep -q 'BEGIN OPENSSH PRIVATE KEY' "$HOME/.ssh/id_ed25519"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+
+      - name: rsync 暂存并调用 release.sh
+        run: |
+          set -euo pipefail
+          STAGE="/tmp/agent-backend-release-${SHA}"
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=15)
+          RSH="ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=15"
+          TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+
+          "${SSH[@]}" "$TARGET" "mkdir -p $(printf '%q' "$STAGE")/frontend/dist $(printf '%q' "$STAGE")/backend $(printf '%q' "$STAGE")/deploy"
+
+          rsync -az --delete -e "$RSH" \
+            frontend/dist/ \
+            "${TARGET}:${STAGE}/frontend/dist/"
+
+          rsync -az --delete -e "$RSH" \
+            --exclude 'venv' \
+            --exclude '__pycache__' \
+            --exclude '.env' \
+            --exclude '.env.bak-*' \
+            --exclude '*.pyc' \
+            --exclude '.ruff_cache' \
+            backend/ \
+            "${TARGET}:${STAGE}/backend/"
+
+          rsync -az --delete -e "$RSH" \
+            deploy/ \
+            "${TARGET}:${STAGE}/deploy/"
+
+          "${SSH[@]}" "$TARGET" "bash $(printf '%q' "$STAGE/deploy/release.sh") $(printf '%q' "$SHA") --source $(printf '%q' "$STAGE")"
+
+      - name: 冒烟 HTTPS + IP 通道
+        run: |
+          set -euo pipefail
+          BASE="https://www.sid-code.cc/traj"
+          curl_code() {
+            local url="$1"
+            curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-body -w '%{http_code}' "$url"
+          }
+
+          code="$(curl_code "$BASE/api/v1/health")"
+          echo "HTTPS health $code"
+          test "$code" = 200
+          grep -q '"status":"ok"' /tmp/smoke-body
+
+          code="$(curl_code "$BASE/login")"
+          echo "login $code"
+          test "$code" = 200
+          grep -qi '<html' /tmp/smoke-body
+          grep -q 'index-' /tmp/smoke-body
+
+          code="$(curl_code "$BASE/api/v1/trajectories")"
+          echo "trajectories $code"
+          test "$code" = 401
+
+          code="$(curl_code "$BASE/api/v1/compare")"
+          echo "compare $code"
+          test "$code" = 404
+
+          # 不跟随 3xx：IP :80 若被 301 到 HTTPS，老二进制会因证书不含 IP 而死锁
+          ip_code="$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ip -w '%{http_code}' "http://${DEPLOY_HOST}/traj/api/v1/health")"
+          echo "IP health $ip_code"
+          test "$ip_code" = 200
+          grep -q '"status":"ok"' /tmp/smoke-ip
+
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          "${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" 'curl -fsS --max-time 10 http://127.0.0.1:8900/api/v1/health'
+          echo "smoke http ok SHA=$SHA"
+
+      - name: 可选 SMOKE_BASIC（登录后列表）
+        env:
+          SMOKE_BASIC: ${{ secrets.SMOKE_BASIC }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SMOKE_BASIC:-}" ]]; then
+            echo "SMOKE_BASIC 未配置，跳过登录后冒烟"
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json, os, ssl, urllib.request
+
+          base = "https://www.sid-code.cc/traj/api/v1"
+          raw = os.environ["SMOKE_BASIC"]
+          user, _, password = raw.partition(":")
+          if not user or not password:
+              raise SystemExit("SMOKE_BASIC 必须是 user:pass")
+          ctx = ssl.create_default_context()
+          req = urllib.request.Request(
+              base + "/auth/login",
+              data=json.dumps({"username": user, "password": password}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
+              cookie = resp.headers.get("Set-Cookie", "")
+              if resp.status != 200:
+                  raise SystemExit(f"login {resp.status}")
+          if "traj_session=" not in cookie:
+              raise SystemExit("login 未下发 traj_session")
+          cookie_header = cookie.split(";", 1)[0]
+          for path in ("/auth/me", "/trajectories?page=1&page_size=1"):
+              r = urllib.request.Request(
+                  base + path,
+                  headers={"Cookie": cookie_header},
+              )
+              with urllib.request.urlopen(r, context=ctx, timeout=20) as resp:
+                  if resp.status != 200:
+                      raise SystemExit(f"{path} {resp.status}")
+          r = urllib.request.Request(
+              base + "/auth/logout",
+              data=b"{}",
+              headers={"Cookie": cookie_header, "Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(r, context=ctx, timeout=20) as resp:
+              if resp.status != 200:
+                  raise SystemExit(f"logout {resp.status}")
+          print("SMOKE_BASIC ok")
+          PY

@@ -77,10 +77,10 @@ pre-commit install          # 装 git hook，提交前自动跑 ruff / gitleaks 
 
 ```bash
 cd backend && ruff check . && alembic check
-python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py -v
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_deploy_scripts.py -v
 ```
 
-从仓库根也可以：`backend/venv/bin/python -m pytest tests/test_boundaries.py tests/test_identity.py -v`。
+从仓库根也可以：`backend/venv/bin/python -m pytest tests/test_boundaries.py tests/test_identity.py tests/test_deploy_scripts.py -v`。
 
 `tests/test_e2e.py`、`test_concurrent.py`、`test_fault.py`、`test_frontend_api.py`、`test_audit.py` 是对着**活服务端**的手动验收，**不进 CI**，也不作为 PR 门槛。怎么跑见 `tests/README.md`。
 
@@ -117,6 +117,7 @@ gitleaks git --redact --log-opts='--all'    # 扫 git 历史；公开仓口径
 - 运行时 `create_all` / 手写「启动时加列」
 - 用 npm / yarn 替换 pnpm
 - 把生产路径、unit 文件名、`/traj/` 前缀改掉来「和仓名对齐」
+- 给 `.github/workflows/deploy.yml` 加 `pull_request` 触发，或把业务凭据写进 GitHub Secrets
 - 把路线图（flag / policy / 事件 / 成本）写成已经交付
 
 ## 上报安全问题
