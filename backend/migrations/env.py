@@ -14,13 +14,12 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.core.config import settings
-
 # 导入所有模块的 model，使 Base.metadata 完整
 # 新增模块时必须在这里补一行 import，否则 autogenerate 会把它的表当成「待删除」
-from app.core.db import Base  # noqa: F401
 import app.modules.identity.model  # noqa: F401
 import app.modules.trajectory.model  # noqa: F401
+from app.core.config import settings
+from app.core.db import Base  # noqa: F401
 
 config = context.config
 
