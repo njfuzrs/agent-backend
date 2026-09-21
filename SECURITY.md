@@ -70,17 +70,17 @@
 因此：
 
 - **控制面不得复用数据面凭据。** 尤其禁止把 `X-Upload-Token` / `verify_upload_token` / `verify_basic_auth` 挂到 `/ctl/` 上。能上传轨迹的人，不应该因此获得下发策略的权力。
-- `/ctl/` 必须走 `require_device`。这条由 `tests/test_boundaries.py` 反射检查锁定。
-- 开源当天 `require_device` 对 `/ctl/` 仍返回 **501**（M1 未开工）。501 是「未实现」，不是「未鉴权即可用」。把它改成挂上传 token 的 200，属于安全回归，不是功能。
+- `/ctl/` 必须走 `require_device`（签发入口 `POST /ctl/enroll` 除外，走一次性注册码 `X-Enroll-Token`）。这条由 `tests/test_boundaries.py` 反射检查锁定。
+- 设备凭据只存 sha256，明文只在 enroll 响应里出现一次。`revoked_at` 非空或过期即 401。
 
 下面这些**不算漏洞**：
 
-- `/ctl/` 现在 501（路线图，见 README「还没有什么」）
 - 控制面与数据面用两套依赖链（这是纪律，不是缺陷）
+- 管理台目前是共享口令 + cookie，设备身份是可注入不是 SSO（路线图）
 
 下面这些**算漏洞，请上报**：
 
-- 任意 `/ctl/` 端点能在无 `require_device` 的情况下被调用（含「先 501 再偷偷换鉴权」）
+- 任意 `/ctl/` 端点能在无 `require_device` 的情况下被调用（签发入口 `/ctl/enroll` 除外；把它改成挂上传 token 的 200 属于安全回归）
 - 控制面模块 import 了 `verify_upload_token` / `verify_basic_auth`
 - 用数据面 token 成功打到本应属于控制面的能力（flag / policy / 设备签发）
 

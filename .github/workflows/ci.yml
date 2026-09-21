@@ -41,7 +41,7 @@ jobs:
           alembic upgrade head
           alembic check
 
-  test-boundaries:
+  test-backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -49,8 +49,8 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install -r backend/requirements.txt pytest
-      - run: python -m pytest tests/test_boundaries.py -v
-        # 7 个 test_；其中 3 个会 import app.main，依赖上面的 AUTH_* env
+      - run: python -m pytest tests/test_boundaries.py tests/test_identity.py -v
+        # test_boundaries 7 个；test_identity 覆盖 enroll / 吊销 / 明文不入库
 
   frontend:
     runs-on: ubuntu-latest

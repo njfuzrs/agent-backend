@@ -3,6 +3,7 @@ import { Layout, Menu, Typography, Modal, Input, Form, message } from 'antd'
 import {
   ApartmentOutlined,
   DashboardOutlined,
+  DesktopOutlined,
   UnorderedListOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
@@ -12,6 +13,7 @@ import CompareDetail from './modules/trajectory/pages/CompareDetail'
 import CompareList from './modules/trajectory/pages/CompareList'
 import TrajectoryList from './modules/trajectory/pages/TrajectoryList'
 import TrajectoryDetail from './modules/trajectory/pages/TrajectoryDetail'
+import DeviceList from './modules/identity/pages/DeviceList'
 import { checkAuth, login } from './modules/trajectory/services/api'
 
 const { Header, Content } = Layout
@@ -56,9 +58,11 @@ function App() {
     ? '/trajectories'
     : location.pathname.startsWith('/compare')
       ? '/compare'
-      : location.pathname.startsWith('/settings')
-        ? '/settings'
-        : '/'
+      : location.pathname.startsWith('/devices')
+        ? '/devices'
+        : location.pathname.startsWith('/settings')
+          ? '/settings'
+          : '/'
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -75,6 +79,7 @@ function App() {
             { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
             { key: '/trajectories', icon: <UnorderedListOutlined />, label: '轨迹' },
             { key: '/compare', icon: <ApartmentOutlined />, label: '对比' },
+            { key: '/devices', icon: <DesktopOutlined />, label: '设备' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
@@ -87,6 +92,7 @@ function App() {
           <Route path="/trajectories/:sessionId" element={<TrajectoryDetail />} />
           <Route path="/compare" element={<CompareList />} />
           <Route path="/compare/:groupId" element={<CompareDetail />} />
+          <Route path="/devices" element={<DeviceList />} />
           <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         </Routes>
       </Content>

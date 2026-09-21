@@ -8,11 +8,12 @@
     cd backend && ../backend/venv/bin/python -m pytest ../tests/test_boundaries.py -v
     # 或从仓库根：backend/venv/bin/python -m pytest tests/test_boundaries.py -v
 
-四条测试：
+测试：
     ① 控制面禁止复用数据面鉴权（静态扫描）
-    ② 每个 /ctl/ 端点必须挂 require_device（反射检查）
+    ② 每个 /ctl/ 端点必须挂 require_device（反射检查；enroll 豁免）
     ③ 跨模块禁止直接查表（静态扫描）
     ④ 冻结区路径不得变更（快照测试）
+    ⑤ enroll 不得走数据面凭据
 """
 
 import ast
@@ -119,8 +120,8 @@ def test_all_control_endpoints_require_device():
     这条防的是「新加端点忘了挂鉴权」，是最容易发生的一类事故 ——
     特征是代码 review 看不出来（每个文件单独看都正常）。
 
-    M0 阶段还没有 /ctl/ 端点，此时测试自然通过；
-    但它必须**现在就存在**，这样 M1 加第一个控制面端点时门禁已经在位。
+    /ctl/enroll 是签发入口，不能挂 require_device（鸡生蛋），用一次性码鉴权；
+    其余 /ctl/ 端点一律要挂。这条防的是「新加端点忘了挂鉴权」。
     """
     from app.core.auth.control_plane import require_device
     from app.main import app
@@ -129,13 +130,15 @@ def test_all_control_endpoints_require_device():
     for path, methods, dependant in _iter_app_routes(app):
         if "/ctl/" not in path:
             continue
+        if path.rstrip("/") == "/api/v1/ctl/enroll":
+            continue
         deps = getattr(dependant, "dependencies", []) or []
         found = any(getattr(d, "call", None) is require_device for d in _flatten_deps(deps))
         if not found:
             offenders.append(f"{','.join(sorted(methods))} {path}")
 
     assert not offenders, (
-        "以下控制面端点没有挂 require_device（规划 §2.1，无例外）:\n  "
+        "以下控制面端点没有挂 require_device（规划 §2.1；/ctl/enroll 除外）:\n  "
         + "\n  ".join(offenders)
     )
 
@@ -301,6 +304,34 @@ def test_upload_session_file_uses_upload_token():
             return
         pytest.fail("/api/v1/upload/session-file 不再使用 verify_upload_token 鉴权")
     pytest.fail("/api/v1/upload/session-file 端点不存在")
+
+
+# 签发入口不能挂 require_device（鸡生蛋），但绝不能退回数据面凭据。
+ENROLL_PATH = "/api/v1/ctl/enroll"
+
+
+def test_enroll_exists_and_does_not_use_data_plane_auth():
+    """POST /ctl/enroll 必须存在，且依赖链里没有 verify_upload_token / verify_basic_auth。"""
+    from app.core.auth.data_plane import verify_basic_auth, verify_upload_token
+    from app.main import app
+
+    found = False
+    for path, methods, dependant in _iter_app_routes(app):
+        if path.rstrip("/") != ENROLL_PATH:
+            continue
+        found = True
+        assert "POST" in methods, "enroll 必须是 POST"
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        leaked = [
+            name
+            for name, fn in (
+                ("verify_upload_token", verify_upload_token),
+                ("verify_basic_auth", verify_basic_auth),
+            )
+            if any(getattr(d, "call", None) is fn for d in deps)
+        ]
+        assert not leaked, f"{ENROLL_PATH} 复用了数据面鉴权: {leaked}"
+    assert found, f"{ENROLL_PATH} 端点不存在"
 
 
 # ---------------------------------------------------------------------------

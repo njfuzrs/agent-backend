@@ -15,16 +15,22 @@ schema 演进由 Alembic 接管（见 backend/migrations/）。本文件不再�
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
+
+
+class Base(DeclarativeBase):
+    """全模块共用的 ORM 基类。Alembic 从这里收集 metadata。"""
+
+    pass
 
 engine = create_async_engine(settings.DATABASE_URL, echo=False)
 
 # SQLite 专用：开启 WAL 模式（PostgreSQL 不需要）
 if settings.is_sqlite:
     @event.listens_for(engine.sync_engine, "connect")
-    def set_sqlite_pragmas(dbapi_conn, connection_record):
+    def set_sqlite_pragmas(dbapi_conn, connection_record):  # noqa: ARG001
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
@@ -35,5 +41,6 @@ async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False
 
 
 async def get_db():
+    # 每次从模块全局取 sessionmaker，测试才能把 async_session 换成独立库。
     async with async_session() as session:
         yield session

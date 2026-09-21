@@ -29,7 +29,7 @@ GitHub 仓是 `agent-backend`，线上仍是 `/opt/trajectory-platform`、system
 ### 4. 双平面鉴权隔离
 
 数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。
-`/ctl/` 必须挂 `require_device`。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。
+`/ctl/` 必须挂 `require_device`（签发入口 `/ctl/enroll` 除外，走一次性注册码）。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。
 这条由 `tests/test_boundaries.py` 锁定，破坏它的 PR 不会被合并。细节见 [SECURITY.md](./SECURITY.md)。
 
 ### 5. schema 只有一条路
@@ -77,10 +77,10 @@ pre-commit install          # 装 git hook，提交前自动跑 ruff / gitleaks 
 
 ```bash
 cd backend && ruff check . && alembic check
-python -m pytest ../tests/test_boundaries.py -v
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py -v
 ```
 
-从仓库根也可以：`backend/venv/bin/python -m pytest tests/test_boundaries.py -v`。
+从仓库根也可以：`backend/venv/bin/python -m pytest tests/test_boundaries.py tests/test_identity.py -v`。
 
 `tests/test_e2e.py`、`test_concurrent.py`、`test_fault.py`、`test_frontend_api.py`、`test_audit.py` 是对着**活服务端**的手动验收，**不进 CI**，也不作为 PR 门槛。怎么跑见 `tests/README.md`。
 
@@ -117,7 +117,7 @@ gitleaks git --redact --log-opts='--all'    # 扫 git 历史；公开仓口径
 - 运行时 `create_all` / 手写「启动时加列」
 - 用 npm / yarn 替换 pnpm
 - 把生产路径、unit 文件名、`/traj/` 前缀改掉来「和仓名对齐」
-- 把路线图（flag / policy / 事件 / 成本 / `require_device` 真鉴权）写成已经交付
+- 把路线图（flag / policy / 事件 / 成本）写成已经交付
 
 ## 上报安全问题
 
