@@ -8,7 +8,7 @@
 
 本仓是 **Agent Backend**（企业级 Agent 后端）：sid-code 与 claude-trace 共同面对的服务端，控制面（policy / flag / 身份）与数据面（轨迹 / 事件）同仓部署、鉴权隔离。
 
-轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），不是最终产品形态。identity / flag / policy / event / cost 按里程碑迭代，目录可以先不建。
+轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`）。flag / policy / event / cost 按里程碑迭代，目录可以先不建。
 
 GitHub 目标仓名 `njfuzrs/agent-backend`。生产路径 `/opt/trajectory-platform`、nginx 前缀 `/traj/`、unit 文件名 `trajectory-platform.service` **故意不改**（采集 URL 已对外冻结）。
 
@@ -46,16 +46,21 @@ agent-backend/
 │   │   │   ├── db.py           # 引擎 + session（不再建表，schema 归 Alembic）
 │   │   │   ├── auth/
 │   │   │   │   ├── data_plane.py     # Basic Auth + Upload Token（含冻结区鉴权）
-│   │   │   │   ├── control_plane.py  # require_device，M1 前抛 501
+│   │   │   │   ├── control_plane.py  # require_device：Bearer 设备凭据
 │   │   │   │   └── session.py        # 管理台 HttpOnly cookie 会话
 │   │   │   └── router/auth.py   # /auth/login、/logout、/me
 │   │   └── modules/        # 业务模块 = 一组内聚的表 + 一个路由前缀 + 一条鉴权链
-│   │       └── trajectory/     # 模块一：轨迹存储与分析（已交付）
-│   │           ├── model.py    # ORM 模型（4 张表）
-│   │           ├── schemas.py  # Pydantic 模型
-│   │           ├── router/     # upload / trajectories / stats / compare / export / scoring
-│   │           └── service/    # storage / traj_parser / tool_steps / stats_service / scoring
-│   │       # 规划中、目录尚未建：identity / flag / policy / event / cost
+│   │       ├── trajectory/     # 模块一：轨迹存储与分析（已交付）
+│   │       │   ├── model.py    # ORM 模型（4 张表）
+│   │       │   ├── schemas.py  # Pydantic 模型
+│   │       │   ├── router/     # upload / trajectories / stats / compare / export / scoring
+│   │       │   └── service/    # storage / traj_parser / tool_steps / stats_service / scoring
+│   │       └── identity/       # 模块二：设备注册与凭据（M1）
+│   │           ├── model.py    # organizations / teams / devices / device_credentials / enroll_codes
+│   │           ├── schemas.py
+│   │           ├── router/     # enroll / whoami / admin
+│   │           └── service/    # enroll / admin / secrets
+│   │       # 规划中、目录尚未建：flag / policy / event / cost
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   ├── src/
@@ -65,6 +70,7 @@ agent-backend/
 │   │   │   ├── components/  # Timeline, ToolCallBlock, ThinkingBlock ...
 │   │   │   ├── services/    # api.ts（cookie 会话，凭据不进 localStorage）
 │   │   │   └── types/       # trajectory.ts
+│   │   ├── modules/identity/     # 设备列表 / 一次性注册码
 │   │   └── utils/          # 跨模块工具（format / chart / trajectoryDetail）
 │   └── vite.config.ts      # base: '/traj/'（冻结区，不要改）
 ├── data/                   # 数据目录（.gitignore）
@@ -87,7 +93,7 @@ agent-backend/
 - **存储后端抽象**：`modules/trajectory/service/storage.py` 定义了 `StorageBackend` 协议，`LocalStorage`（本地文件）和 `OSSStorage`（对象存储 + LRU 缓存）两个实现，通过 `STORAGE_BACKEND` 环境变量切换
 - **数据库兼容**：`core/db.py` 根据 `DATABASE_URL` 前缀自动选择驱动，SQLite 模式自动执行 WAL pragma
 - **schema 演进只有一条路**：`alembic upgrade head`。原 `init_db()` 的 `create_all` + `_migrate_sqlite_columns()` 已删除 —— 前者不改已有表的列，后者被 `is_sqlite` 挡住（生产是 PG，等于生产无加列路径）。运行时代码不得建表，由边界测试拦截
-- **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`，由边界测试反射检查
+- **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`（签发入口 `/ctl/enroll` 除外，走一次性注册码），由边界测试反射检查
 - **管理台凭据不落 localStorage**：登录走 `/api/v1/auth/login` 下发 HttpOnly + SameSite cookie（无状态 HMAC 签名，跨 worker 有效）。Basic Auth 保留给脚本与 curl
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400
@@ -121,7 +127,7 @@ cd frontend && pnpm run build
 
 # 门禁自查（提交前跑一遍）
 cd backend && ruff check . && alembic check          # lint + schema 漂移
-python -m pytest ../tests/test_boundaries.py -v      # 边界测试
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py -v      # 边界 + 身份
 
 # 数据库迁移
 cd backend && alembic upgrade head                   # 本地：建库/升级

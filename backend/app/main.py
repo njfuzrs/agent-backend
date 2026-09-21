@@ -13,9 +13,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.core import db as db_mod
 from app.core.config import settings
-from app.core.db import engine
 from app.core.router import auth
+from app.modules.identity.router import admin as identity_admin
+from app.modules.identity.router import enroll as identity_enroll
+from app.modules.identity.router import whoami as identity_whoami
 from app.modules.trajectory.router import (
     compare,
     export,
@@ -39,7 +42,7 @@ async def _check_schema_version() -> None:
     这两件事失去独立的失败点。所以这里只警告，把决定权留给部署流程。
     """
     try:
-        async with engine.connect() as conn:
+        async with db_mod.engine.connect() as conn:
             row = await conn.execute(text("SELECT version_num FROM alembic_version"))
             current = row.scalar()
     except Exception:
@@ -52,7 +55,7 @@ async def _check_schema_version() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: ARG001 — FastAPI 要求这个签名
     await _check_schema_version()
     yield
 
@@ -84,8 +87,13 @@ app.include_router(export.router, prefix="/api/v1")
 app.include_router(scoring.router, prefix="/api/v1")
 
 # ---- 控制面：策略向客户端流入 ----
-# M1 起在此挂载 /api/v1/ctl/** 路由，鉴权一律 Depends(require_device)，
-# 绝不接受 verify_upload_token / verify_basic_auth（规划 §2.1，由边界测试机械化）。
+# /ctl/** 鉴权一律 Depends(require_device)，唯一例外是签发入口 /ctl/enroll
+# （一次性注册码，鸡生蛋；由边界测试列为显式豁免，并禁止它走数据面凭据）。
+app.include_router(identity_enroll.router, prefix="/api/v1")
+app.include_router(identity_whoami.router, prefix="/api/v1")
+
+# ---- 管理台：身份（cookie 会话，给人看，不给客户端下发策略）----
+app.include_router(identity_admin.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

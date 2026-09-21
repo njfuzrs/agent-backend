@@ -54,14 +54,17 @@ class DataPlaneSettings(BaseSettings):
 class ControlPlaneSettings(BaseSettings):
     """控制面：策略向客户端流入。
 
-    M0 阶段为空壳，只占位。M1 起在此加设备凭据签发相关配置
-    （签名密钥、凭据 TTL、注册开关）。
+    设备凭据签发（M1）：注册开关默认关闭 —— 一个能签发凭据的端点不应该默认可用。
     """
 
     model_config = _ENV
 
-    # M1 占位：注册端点是否开放。默认关闭 —— 一个能签发凭据的端点不应该默认可用。
+    # 注册端点是否开放。默认关闭。打开前须先在管理台生成一次性注册码。
     CTL_ENROLL_ENABLED: bool = False
+    # 设备凭据有效期（天）。活跃使用会滑动续期。
+    CTL_CREDENTIAL_TTL_DAYS: int = 90
+    # 一次性注册码有效期（小时）。签发是授予信任，码本身也应短命。
+    CTL_ENROLL_CODE_TTL_HOURS: int = 24
 
 
 class StorageSettings(BaseSettings):

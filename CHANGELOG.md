@@ -12,6 +12,7 @@
 
 ### 新增
 
+- identity 模块：一次性注册码换设备凭据（`POST /api/v1/ctl/enroll`），`require_device` 查 sha256、拒吊销/过期。管理台可看设备列表与 `last_seen_at`。
 - 治理文件：`LICENSE`（MIT）、`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`、
   CI、Dependabot、pre-commit + gitleaks。
 - 根 README：产品名 **Agent Backend**（企业级 Agent 后端），写明「现在有什么 / 还没有什么」
@@ -31,4 +32,3 @@
 
 - 生产路径 `/opt/trajectory-platform`、unit 文件名、nginx `/traj/` **保持原样**。
   开源仓名与线上目录分叉是有意的，采集 URL 已冻结。
-- `require_device` 对 `/ctl/` 仍是 501。不要把路线图当成已交付。

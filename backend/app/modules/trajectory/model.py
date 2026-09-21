@@ -10,11 +10,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.orm import relationship
 
-
-class Base(DeclarativeBase):
-    pass
+from app.core.db import Base
 
 
 class Trajectory(Base):
