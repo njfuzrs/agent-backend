@@ -1,4 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# push_code.sh — 本机发版入口。构建前端，把产物 rsync 到服务器暂存目录，
+# 再 ssh 调远端唯一切换脚本 deploy/release.sh。
+#
+# 停服务 / 备份 / 迁库 / chmod / 启动 / health 都在 release.sh 里，
+# 不要在本文件再复制一份，否则三个月后又分叉。
+#
+# 用法：
+#   export TRAJ_REMOTE_HOST=<host>
+#   export TRAJ_SSH_KEY=~/.ssh/id_ed25519    # 或设置 SSHPASS
+#   bash deploy/push_code.sh
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,14 +20,30 @@ if [[ -z "${TRAJ_REMOTE_HOST:-}" ]]; then
   exit 1
 fi
 REMOTE_HOST="$TRAJ_REMOTE_HOST"
-# 生产路径与开源仓名分叉是有意的：GitHub 仓是 agent-backend，线上目录仍是 /opt/trajectory-platform。
-REMOTE_BASE_DIR="${TRAJ_REMOTE_BASE_DIR:-/opt/trajectory-platform}"
+# 切流前默认仍是 /opt/trajectory-platform（生产目录文：切流前不要改仓库默认值）。
+# 传给远端的 AGENT_BACKEND_ROOT；release.sh 未收到时会自己探测。
+REMOTE_BASE_DIR="${TRAJ_REMOTE_BASE_DIR:-${AGENT_BACKEND_ROOT:-/opt/trajectory-platform}}"
 SSH_KEY="${TRAJ_SSH_KEY:-}"
 SSH_OPTS="-o StrictHostKeyChecking=no"
+
+if ! git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "不在 git 仓库内，无法取 SHA" >&2
+  exit 1
+fi
+SHA="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+STAGE="/tmp/agent-backend-release-${SHA}"
+
+echo "==> SHA=$SHA"
+echo "==> 远端暂存 $REMOTE_USER@$REMOTE_HOST:$STAGE"
+echo "==> AGENT_BACKEND_ROOT=$REMOTE_BASE_DIR"
 
 build_frontend() {
   echo "==> 构建前端"
   (cd "$ROOT_DIR/frontend" && pnpm build)
+  [[ -f "$ROOT_DIR/frontend/dist/index.html" ]] || {
+    echo "前端构建后没有 dist/index.html" >&2
+    exit 1
+  }
 }
 
 rsync_cmd() {
@@ -44,61 +70,34 @@ ssh_cmd() {
   fi
 }
 
-sync_frontend() {
-  echo "==> 同步前端 dist"
+stage_remote() {
+  echo "==> 暂存到 ${STAGE} （不直接写 ${REMOTE_BASE_DIR}）"
+  ssh_cmd "mkdir -p $(printf '%q' "$STAGE")/frontend/dist $(printf '%q' "$STAGE")/backend $(printf '%q' "$STAGE")/deploy"
   rsync_cmd --delete \
     "$ROOT_DIR/frontend/dist/" \
-    "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_BASE_DIR}/frontend/dist/"
-}
-
-sync_backend() {
-  echo "==> 同步后端代码"
-  rsync_cmd \
+    "${REMOTE_USER}@${REMOTE_HOST}:${STAGE}/frontend/dist/"
+  rsync_cmd --delete \
     --exclude 'venv' \
     --exclude '__pycache__' \
     --exclude '.env' \
+    --exclude '.env.bak-*' \
     --exclude '*.pyc' \
+    --exclude '.ruff_cache' \
     "$ROOT_DIR/backend/" \
-    "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_BASE_DIR}/backend/"
-}
-
-sync_deploy() {
-  echo "==> 同步 deploy 目录"
-  rsync_cmd \
+    "${REMOTE_USER}@${REMOTE_HOST}:${STAGE}/backend/"
+  rsync_cmd --delete \
     "$ROOT_DIR/deploy/" \
-    "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_BASE_DIR}/deploy/"
+    "${REMOTE_USER}@${REMOTE_HOST}:${STAGE}/deploy/"
 }
 
-migrate_backend() {
-  # schema 演进（M0/PR-0.1）：必须在**重启之前**跑，且与重启是两个独立的失败点。
-  # 顺序不能反 —— 先重启会让新代码撞上旧 schema。
-  #
-  # 首次上线前需先执行一次 deploy/migrate.sh stamp（把生产库标记为已处于基线），
-  # 否则这里的 upgrade 会尝试 create_table 而失败。
-  echo "==> 远端执行数据库迁移"
-  ssh_cmd "cd ${REMOTE_BASE_DIR}/backend && \
-    if [ -d venv ]; then . venv/bin/activate; fi && \
-    alembic current && \
-    alembic upgrade head && \
-    alembic current"
-}
-
-restart_backend() {
-  echo "==> 远端安装依赖并重启服务"
-  ssh_cmd "pip3 install -r ${REMOTE_BASE_DIR}/backend/requirements.txt && systemctl restart trajectory-platform && systemctl status trajectory-platform --no-pager"
-}
-
-health_check() {
-  echo "==> 健康检查"
-  ssh_cmd "for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:8900/api/v1/health && exit 0; sleep 2; done; exit 1"
+run_release() {
+  echo "==> 远端 release.sh"
+  # 把本机选中的根目录传过去，避免脚本在服务器上探测到另一套路径
+  ssh_cmd "AGENT_BACKEND_ROOT=$(printf '%q' "$REMOTE_BASE_DIR") bash $(printf '%q' "$STAGE/deploy/release.sh") $(printf '%q' "$SHA") --source $(printf '%q' "$STAGE")"
 }
 
 build_frontend
-sync_frontend
-sync_backend
-sync_deploy
-migrate_backend     # 迁移先于重启：先重启会让新代码撞上旧 schema
-restart_backend
-health_check
+stage_remote
+run_release
 
-echo "==> 完成"
+echo "==> 完成  SHA=$SHA"

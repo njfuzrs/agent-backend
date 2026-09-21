@@ -14,9 +14,10 @@ db_count=$(psql -U "$PG_USER" -d "$PG_DB" -t -c \
     "SELECT COUNT(*) FROM trajectories WHERE deleted_at IS NULL;" | tr -d ' ')
 
 # OSS 中的 session.traj 文件数
-oss_count=$(ossutil ls "${OSS_BUCKET}/sessions/" -s 2>/dev/null \
+# 机器上的二进制是 ossutil64，不是 ossutil
+oss_count=$(ossutil64 ls "${OSS_BUCKET}/sessions/" -s 2>/dev/null \
     | grep "session.traj" | grep -v ".gz" -c 2>/dev/null || echo "0")
-oss_gz_count=$(ossutil ls "${OSS_BUCKET}/sessions/" -s 2>/dev/null \
+oss_gz_count=$(ossutil64 ls "${OSS_BUCKET}/sessions/" -s 2>/dev/null \
     | grep "session.traj.gz" -c 2>/dev/null || echo "0")
 oss_total=$((oss_count + oss_gz_count))
 

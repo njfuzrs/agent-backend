@@ -17,6 +17,7 @@
   CI、Dependabot、pre-commit + gitleaks。
 - 根 README：产品名 **Agent Backend**（企业级 Agent 后端），写明「现在有什么 / 还没有什么」
   与 M1–M6 路线图。轨迹是已交付的模块一，不是整个产品。
+- 生产发版入口 `deploy/release.sh`：服务器上停服务 / 备份 / 迁库 / 切代码 / 启动 / 冒烟的唯一脚本。`push_code.sh` 改为 rsync 到 `/tmp/agent-backend-release-$SHA/` 再调它。根目录读 `AGENT_BACKEND_ROOT`。
 
 ### 变更
 
@@ -28,6 +29,7 @@
 
 ### 修复
 
+- `backup_pg.sh`：调用 `ossutil64`、git 可执行位、从 `$ROOT/.env` 的 `DATABASE_URL` 解析 `PGPASSWORD`；无密码非 0。`audit.sh` / `cleanup_deleted.sh` 同样改调 `ossutil64`。
 - 边界测试遍历路由时兼容 FastAPI 0.141+ 的 `_IncludedRouter`（不再把冻结区误报成端点消失）。
 
 ### 说明

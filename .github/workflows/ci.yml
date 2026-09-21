@@ -49,8 +49,9 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install -r backend/requirements.txt pytest
-      - run: python -m pytest tests/test_boundaries.py tests/test_identity.py -v
+      - run: python -m pytest tests/test_boundaries.py tests/test_identity.py tests/test_deploy_scripts.py -v
         # test_boundaries 7 个；test_identity 覆盖 enroll / 吊销 / 明文不入库
+        # test_deploy_scripts 覆盖 backup_pg / release 契约（不连生产）
 
   frontend:
     runs-on: ubuntu-latest

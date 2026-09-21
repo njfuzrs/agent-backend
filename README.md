@@ -78,7 +78,7 @@ bash scripts/backfill_sid_code.sh --dry-run
 
 ## 部署
 
-生产目录、systemd unit 文件名、nginx `/traj/` **保持原样**（`/opt/trajectory-platform`、`trajectory-platform.service`）。开源仓改名不等于服务器改名。运维脚本在 `deploy/`，目标主机必须显式设置 `TRAJ_REMOTE_HOST`，仓库里没有公网 IP 默认值。
+生产目录、systemd unit 文件名、nginx `/traj/` **保持原样**（切流前 `/opt/trajectory-platform`、`trajectory-platform.service`）。开源仓改名不等于服务器改名。运维脚本在 `deploy/`：本机 `push_code.sh` 与以后的 GitHub CD 都调同一份 `deploy/release.sh`。目标主机必须显式设置 `TRAJ_REMOTE_HOST`，仓库里没有公网 IP 默认值。`release.sh` 读 `AGENT_BACKEND_ROOT`，不 `mv /opt`、不改 nginx。
 
 ## 路线图
 
