@@ -71,7 +71,7 @@ ssh_cmd() {
 }
 
 stage_remote() {
-  echo "==> 暂存到 $STAGE（不直接写 $REMOTE_BASE_DIR）"
+  echo "==> 暂存到 ${STAGE} （不直接写 ${REMOTE_BASE_DIR}）"
   ssh_cmd "mkdir -p $(printf '%q' "$STAGE")"
   rsync_cmd --delete \
     "$ROOT_DIR/frontend/dist/" \
