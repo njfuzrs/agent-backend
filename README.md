@@ -78,7 +78,9 @@ bash scripts/backfill_sid_code.sh --dry-run
 
 ## 部署
 
-生产目录、systemd unit 文件名、nginx `/traj/` **保持原样**（切流前 `/opt/trajectory-platform`、`trajectory-platform.service`）。开源仓改名不等于服务器改名。运维脚本在 `deploy/`：本机 `push_code.sh` 与以后的 GitHub CD 都调同一份 `deploy/release.sh`。目标主机必须显式设置 `TRAJ_REMOTE_HOST`，仓库里没有公网 IP 默认值。`release.sh` 读 `AGENT_BACKEND_ROOT`，不 `mv /opt`、不改 nginx。
+合入 `main` 且 CI 绿后，GitHub Actions `Deploy` 会自动发到 `https://www.sid-code.cc/traj/`。紧急重放：Actions → Deploy → `workflow_dispatch`（输入 SHA）。流水线只调服务器上的 `deploy/release.sh`，不改 nginx、不 `mv /opt`、不覆盖 systemd unit。
+
+生产目录、systemd unit 文件名、nginx `/traj/` **保持原样**（切流前 `/opt/trajectory-platform`、`trajectory-platform.service`）。开源仓改名不等于服务器改名。本机热修仍可 `TRAJ_REMOTE_HOST=... bash deploy/push_code.sh`，与 CD 走同一份 `release.sh`。目标主机必须显式设置，仓库里没有公网 IP 默认值。`release.sh` 读 `AGENT_BACKEND_ROOT`。
 
 ## 路线图
 

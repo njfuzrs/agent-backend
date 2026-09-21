@@ -177,3 +177,70 @@ def test_release_does_not_own_topology():
     assert "trajectory-platform" in text
     assert "sid-code-locations.conf" not in text
     assert "nginx -" not in body
+
+
+def _command_body(text: str) -> str:
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if line.lstrip() and not line.lstrip().startswith("#")
+    )
+
+
+def test_ci_workflow_name_is_ci():
+    """deploy.yml 的 workflow_run.workflows 必须对上这份 name。"""
+    text = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "\nname: CI\n" in text or text.startswith("name: CI\n")
+
+
+def test_deploy_yml_contract():
+    """合入即发：公开仓不能让 fork PR 看见 production secret；冒烟走 /traj/。"""
+    path = REPO / ".github/workflows/deploy.yml"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    body = _command_body(text)
+
+    assert "\nname: Deploy\n" in text
+    on_block = text.split("\non:", 1)[1].split("\npermissions:", 1)[0]
+    assert "pull_request" not in on_block
+    assert 'workflows: ["CI"]' in on_block
+    assert "workflow_dispatch:" in on_block
+
+    assert "group: production-agent-backend" in text
+    assert "cancel-in-progress: false" in text
+    assert "name: production" in text
+    assert "contents: read" in text
+    assert "deployments: write" in text
+    assert "id-token" not in text
+
+    assert "github.event.workflow_run.head_sha" in text
+    assert "head_branch == 'main'" in text
+    assert "workflow_run.event == 'push'" in text
+    assert "github.repository == 'njfuzrs/agent-backend'" in text
+
+    assert "StrictHostKeyChecking=yes" in text
+    assert "StrictHostKeyChecking=no" not in text
+    assert "IdentitiesOnly=yes" in text
+    assert "appleboy" not in text.lower()
+
+    assert "deploy/release.sh" in text
+    assert "--exclude '.env'" in text
+    assert "rsync -az --delete" in text
+    assert "https://www.sid-code.cc/traj" in text
+    assert "/traj/api/v1/health" in text
+    assert "$BASE/login" in text
+    assert "121.196.144.227" not in text
+    assert "mv /opt" not in body
+    assert "sid-code-locations.conf" not in body
+    assert "/etc/systemd/system" not in body
+
+    # 业务凭据禁止进 GitHub；注释里点名「不要放」可以，赋值不行
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        assert "AUTH_PASSWORD" not in line
+        assert "UPLOAD_TOKEN" not in line
+        assert "SESSION_SECRET" not in line
+        assert "DATABASE_URL" not in line
+        assert "OSS_ACCESS_KEY" not in line

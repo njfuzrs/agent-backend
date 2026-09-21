@@ -10,7 +10,7 @@
 |------|------|------|
 | `test_boundaries.py` | 双平面鉴权 / 冻结区 URL / 运行时不得建表 | 无活服务端（import app） |
 | `test_identity.py` | 注册码二次使用 / 吊销立即失效 / 明文不入库 / `/ctl/` 401 | 无活服务端（独立 SQLite） |
-| `test_deploy_scripts.py` | `backup_pg.sh` / `release.sh` 契约（可执行位、ossutil64、不 mv /opt） | 无活服务端 |
+| `test_deploy_scripts.py` | `backup_pg.sh` / `release.sh` / `deploy.yml` 契约（可执行位、ossutil64、不 mv /opt、CD 不触发 PR） | 无活服务端 |
 | `test_e2e.py` | 端到端：采集→上传→存储→查询全链路 | 服务端运行 |
 | `test_concurrent.py` | 并发上传，验证无阻塞 | 服务端运行 |
 | `test_fault.py` | 故障：SDK 内部逻辑（压缩、队列、重试） | 无需本仓服务端 |
