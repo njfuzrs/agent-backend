@@ -80,7 +80,9 @@ agent-backend/
 │   ├── nginx.conf              # Nginx 配置参考
 │   ├── migrate_to_pg.py        # SQLite → PG 数据迁移
 │   ├── migrate_to_oss.sh       # 本地文件 → OSS 迁移
-│   ├── backup_pg.sh            # PG 每日备份到 OSS（cron 03:00）
+│   ├── release.sh              # 生产切换唯一入口（服务器上跑；读 AGENT_BACKEND_ROOT）
+│   ├── push_code.sh            # 本机入口：build + rsync 暂存 + ssh release.sh
+│   ├── backup_pg.sh            # PG 备份到 OSS（cron 03:00；从 .env 读密码）
 │   ├── audit.sh                # DB vs OSS 每日对账（cron 05:00）
 │   ├── cleanup_deleted.sh      # 软删除 30 天后真删（cron 06:00）
 │   └── migrate.sh              # 生产库 schema 演进入口（current/check/stamp/plan/upgrade）
@@ -127,7 +129,7 @@ cd frontend && pnpm run build
 
 # 门禁自查（提交前跑一遍）
 cd backend && ruff check . && alembic check          # lint + schema 漂移
-python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py -v      # 边界 + 身份
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_deploy_scripts.py -v  # 边界 + 身份 + 发版脚本
 
 # 数据库迁移
 cd backend && alembic upgrade head                   # 本地：建库/升级
@@ -138,5 +140,5 @@ deploy/migrate.sh upgrade                            # 生产：自动备份后�
 # 部署后端到服务器（目标主机必须显式设置，仓库无公网 IP 默认值）
 #   export TRAJ_REMOTE_HOST=<host>
 #   export TRAJ_SSH_KEY=~/.ssh/xxx    # 或设置 SSHPASS（sshpass 接口变量名，不是密码本身）
-bash deploy/push_code.sh    # 构建前端 → 同步 → 迁移 → 重启 → 健康检查
+bash deploy/push_code.sh    # 构建前端 → 暂存 → 远端 release.sh（停/备份/迁库/切代码/启动/冒烟）
 ```

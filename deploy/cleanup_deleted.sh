@@ -26,7 +26,7 @@ for sid in $SESSIONS; do
     echo "  清理: $sid"
 
     # 删除 OSS 文件（整个 session 目录）
-    ossutil rm "${OSS_BUCKET}/sessions/${sid}/" -r -f 2>/dev/null || true
+    ossutil64 rm "${OSS_BUCKET}/sessions/${sid}/" -r -f 2>/dev/null || true
 
     # 删除 DB 记录
     psql -U "$PG_USER" -d "$PG_DB" -c \
