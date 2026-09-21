@@ -1,68 +1,65 @@
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Typography, Modal, Input, Form, message } from 'antd'
+import { Routes, Route, Navigate, useNavigate, useLocation, Outlet } from 'react-router-dom'
+import { Layout, Menu, Typography, Button, Space, Spin } from 'antd'
 import {
-  ApartmentOutlined,
   DashboardOutlined,
   DesktopOutlined,
-  UnorderedListOutlined,
+  LogoutOutlined,
   SettingOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import Dashboard from './modules/trajectory/pages/Dashboard'
-import CompareDetail from './modules/trajectory/pages/CompareDetail'
-import CompareList from './modules/trajectory/pages/CompareList'
 import TrajectoryList from './modules/trajectory/pages/TrajectoryList'
 import TrajectoryDetail from './modules/trajectory/pages/TrajectoryDetail'
 import DeviceList from './modules/identity/pages/DeviceList'
-import { checkAuth, login } from './modules/trajectory/services/api'
+import LoginPage from './pages/Login'
+import { checkAuth, logout } from './modules/trajectory/services/api'
 
 const { Header, Content } = Layout
 
-function App() {
+function ProtectedLayout() {
   const navigate = useNavigate()
   const location = useLocation()
-  // 登录态由服务端 cookie 决定，不再读 localStorage（规划 §PR-0.5 第 4 条）。
-  // 初始 false：先假定已登录，等 /auth/me 回来再决定是否弹框 ——
-  // 避免刷新页面时登录框闪一下（cookie 有效的情况下不该出现登录框）。
-  const [loginOpen, setLoginOpen] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [form] = Form.useForm()
+  const [ready, setReady] = useState(false)
+  const [authed, setAuthed] = useState(false)
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     let cancelled = false
-    checkAuth().then((ok) => {
-      if (!cancelled && !ok) setLoginOpen(true)
+    checkAuth().then(ok => {
+      if (cancelled) return
+      setAuthed(ok)
+      setReady(true)
     })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [location.pathname])
 
-  const handleLogin = async () => {
-    const values = await form.validateFields()
-    setSubmitting(true)
-    try {
-      await login(values.username, values.password)
-      setLoginOpen(false)
-      message.success('登录成功')
-      // reload 让所有已挂载的查询用新会话重新取数
-      window.location.reload()
-    } catch {
-      message.error('用户名或密码错误')
-    } finally {
-      setSubmitting(false)
-    }
+  if (!ready) {
+    return <Spin size="large" style={{ display: 'block', margin: '120px auto' }} />
+  }
+  if (!authed) {
+    return <Navigate to="/login" replace state={{ from: location }} />
   }
 
   const selectedKey = location.pathname.startsWith('/trajectories')
     ? '/trajectories'
-    : location.pathname.startsWith('/compare')
-      ? '/compare'
-      : location.pathname.startsWith('/devices')
-        ? '/devices'
-        : location.pathname.startsWith('/settings')
-          ? '/settings'
-          : '/'
+    : location.pathname.startsWith('/devices')
+      ? '/devices'
+      : location.pathname.startsWith('/settings')
+        ? '/settings'
+        : '/'
+
+  const handleLogout = async () => {
+    try {
+      await logout()
+    } finally {
+      queryClient.clear()
+      navigate('/login', { replace: true })
+    }
+  }
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -78,44 +75,39 @@ function App() {
           items={[
             { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
             { key: '/trajectories', icon: <UnorderedListOutlined />, label: '轨迹' },
-            { key: '/compare', icon: <ApartmentOutlined />, label: '对比' },
             { key: '/devices', icon: <DesktopOutlined />, label: '设备' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
         />
+        <Space>
+          <Button type="text" icon={<LogoutOutlined />} onClick={handleLogout} style={{ color: '#fff' }}>
+            登出
+          </Button>
+        </Space>
       </Header>
       <Content style={{ padding: '24px', background: '#141414' }}>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/trajectories" element={<TrajectoryList />} />
-          <Route path="/trajectories/:sessionId" element={<TrajectoryDetail />} />
-          <Route path="/compare" element={<CompareList />} />
-          <Route path="/compare/:groupId" element={<CompareDetail />} />
-          <Route path="/devices" element={<DeviceList />} />
-          <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
-        </Routes>
+        <Outlet />
       </Content>
-
-      <Modal
-        title="登录"
-        open={loginOpen}
-        onOk={handleLogin}
-        confirmLoading={submitting}
-        closable={false}
-        maskClosable={false}
-        cancelButtonProps={{ style: { display: 'none' } }}
-      >
-        <Form form={form} layout="vertical" initialValues={{ username: 'admin' }}>
-          <Form.Item name="username" label="用户名" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="password" label="密码" rules={[{ required: true }]}>
-            <Input.Password />
-          </Form.Item>
-        </Form>
-      </Modal>
     </Layout>
+  )
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<ProtectedLayout />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/trajectories" element={<TrajectoryList />} />
+        <Route path="/trajectories/:sessionId" element={<TrajectoryDetail />} />
+        <Route path="/devices" element={<DeviceList />} />
+        <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
+        <Route path="/compare" element={<Navigate to="/" replace />} />
+        <Route path="/compare/:groupId" element={<Navigate to="/" replace />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   )
 }
 

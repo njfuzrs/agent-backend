@@ -29,10 +29,6 @@ class TrajectoryListItem(BaseModel):
     project_name: str = ""
     tags: list[str] = []
     user_id: Optional[str] = None
-    # AI 评分
-    ai_score: Optional[int] = None
-    ai_grade: str = ""
-    ai_quality_status: str = "pending"
 
 
 class TrajectoryListResponse(BaseModel):
@@ -115,8 +111,6 @@ class StatsOverviewResponse(BaseModel):
     tool_source_distribution: dict[str, int] = {}
     model_distribution: dict[str, int] = {}
     quality_distribution: dict[str, int] = {}
-    ai_quality_distribution: dict[str, int] = {}
-    avg_ai_score: float = 0.0
 
 
 class TrendPoint(BaseModel):
@@ -180,83 +174,6 @@ class SFTExportRequest(BaseModel):
     max_steps: Optional[int] = Field(None, ge=0)
     format: str = Field("messages", pattern="^(messages|tool|xml)$")
     include_thinking: bool = False
-    # AI 评分过滤
-    ai_quality_status: Optional[str] = None
-    min_ai_score: Optional[int] = Field(None, ge=0, le=100)
-    ai_grade: Optional[str] = None
-
-
-class CompareGroupCreateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=120)
-    description: str = ""
-    task_prompt: str = ""
-
-
-class CompareGroupAddItemsRequest(BaseModel):
-    session_ids: list[str] = Field(..., min_length=1)
-
-
-class CompareGroupAddItemsResponse(BaseModel):
-    group_id: int
-    added_count: int = 0
-    skipped_session_ids: list[str] = []
-
-
-class CompareGroupListItem(BaseModel):
-    id: int
-    name: str
-    description: str = ""
-    task_prompt: str = ""
-    created_at: str
-    item_count: int = 0
-    tool_sources: list[str] = []
-
-
-class CompareGroupListResponse(BaseModel):
-    items: list[CompareGroupListItem] = []
-
-
-class CompareTrajectoryItem(BaseModel):
-    trajectory_id: int
-    session_id: str
-    tool_source: str
-    model: str
-    start_time: Optional[str] = None
-    duration_ms: Optional[int] = None
-    total_steps: int = 0
-    total_tokens: int = 0
-    total_cost_usd: float = 0.0
-    exit_status: str = ""
-    quality_status: str = "unreviewed"
-    first_prompt: str = ""
-    tools_used: list[str] = []
-    tool_usage: dict[str, int] = {}
-
-
-class CompareGroupDetailResponse(BaseModel):
-    id: int
-    name: str
-    description: str = ""
-    task_prompt: str = ""
-    created_at: str
-    item_count: int = 0
-    items: list[CompareTrajectoryItem] = []
-
-
-class CompareRadarItem(BaseModel):
-    trajectory_id: int
-    session_id: str
-    tool_source: str
-    model: str
-    values: list[float | str] = []
-    normalized: list[float] = []
-
-
-class CompareRadarResponse(BaseModel):
-    group_id: int
-    group_name: str
-    dimensions: list[str] = []
-    items: list[CompareRadarItem] = []
 
 
 # ── 健康检查 ──

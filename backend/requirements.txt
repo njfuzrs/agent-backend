@@ -8,5 +8,5 @@ pydantic-settings>=2.0.0
 oss2>=2.18.0
 asyncpg>=0.29.0
 psycopg2-binary>=2.9.0
-httpx>=0.27.0
+httpx>=0.27.0  # Starlette TestClient / identity 门禁依赖，不是评分器
 alembic>=1.13.0

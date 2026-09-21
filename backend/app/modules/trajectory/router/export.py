@@ -123,13 +123,6 @@ async def _load_sft_trajectories(request: SFTExportRequest, db: AsyncSession) ->
         query = query.where(Trajectory.total_steps >= request.min_steps)
     if request.max_steps is not None:
         query = query.where(Trajectory.total_steps <= request.max_steps)
-    if request.ai_quality_status:
-        query = query.where(Trajectory.ai_quality_status == request.ai_quality_status)
-    if request.min_ai_score is not None:
-        query = query.where(Trajectory.ai_score >= request.min_ai_score)
-    if request.ai_grade:
-        grades = [g.strip() for g in request.ai_grade.split(",")]
-        query = query.where(Trajectory.ai_grade.in_(grades))
 
     query = query.order_by(asc(Trajectory.start_time), asc(Trajectory.session_id))
     result = await db.execute(query)

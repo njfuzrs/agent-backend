@@ -20,9 +20,7 @@ from app.modules.identity.router import admin as identity_admin
 from app.modules.identity.router import enroll as identity_enroll
 from app.modules.identity.router import whoami as identity_whoami
 from app.modules.trajectory.router import (
-    compare,
     export,
-    scoring,
     stats,
     trajectories,
     upload,
@@ -82,9 +80,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(upload.router, prefix="/api/v1")
 app.include_router(trajectories.router, prefix="/api/v1")
 app.include_router(stats.router, prefix="/api/v1")
-app.include_router(compare.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
-app.include_router(scoring.router, prefix="/api/v1")
 
 # ---- 控制面：策略向客户端流入 ----
 # /ctl/** 鉴权一律 Depends(require_device)，唯一例外是签发入口 /ctl/enroll

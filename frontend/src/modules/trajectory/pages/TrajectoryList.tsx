@@ -27,13 +27,9 @@ import type { ColumnsType } from 'antd/es/table'
 import type { FilterValue, SorterResult, TablePaginationConfig } from 'antd/es/table/interface'
 import dayjs from 'dayjs'
 import {
-  addCompareGroupItems,
-  batchScore,
   batchUpdateTrajectories,
-  createCompareGroup,
   exportTrajectories,
   exportSFT,
-  fetchCompareGroups,
   fetchTrajectories,
 } from '../services/api'
 import type { TrajectoryListItem } from '../types/trajectory'
@@ -64,25 +60,16 @@ export default function TrajectoryList() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([])
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchSaving, setBatchSaving] = useState(false)
-  const [compareOpen, setCompareOpen] = useState(false)
-  const [compareSaving, setCompareSaving] = useState(false)
   const [sftOpen, setSftOpen] = useState(false)
   const [sftExporting, setSftExporting] = useState(false)
   const [batchForm] = Form.useForm()
-  const [compareForm] = Form.useForm()
   const [sftForm] = Form.useForm()
-  const [batchScoring, setBatchScoring] = useState(false)
 
   const queryParams = { page, page_size: pageSize, sort, ...filters }
 
   const { data, isLoading } = useQuery({
     queryKey: ['trajectories', queryParams],
     queryFn: () => fetchTrajectories(queryParams),
-  })
-
-  const { data: compareGroups } = useQuery({
-    queryKey: ['compare-groups'],
-    queryFn: fetchCompareGroups,
   })
 
   const updateFilter = (key: string, value: unknown) => {
@@ -167,28 +154,6 @@ export default function TrajectoryList() {
       render: (value: string) => EXIT_STATUS_ICON[value] || <span>{value || '-'}</span>,
     },
     {
-      title: 'AI 评分',
-      dataIndex: 'ai_score',
-      width: 100,
-      sorter: true,
-      align: 'center',
-      render: (_value: number | null, record) => {
-        if (record.ai_score == null) return <span style={{ color: '#8c8c8c' }}>-</span>
-        const gradeColors: Record<string, string> = { A: '#52c41a', B: '#73d13d', C: '#faad14', D: '#ff7a45', F: '#ff4d4f' }
-        const statusColors: Record<string, string> = { auto_approved: 'success', auto_rejected: 'error', needs_review: 'warning' }
-        return (
-          <Space size={4} direction="vertical">
-            <span style={{ fontWeight: 600, color: gradeColors[record.ai_grade] || '#8c8c8c' }}>
-              {record.ai_grade} {record.ai_score}
-            </span>
-            <Tag color={statusColors[record.ai_quality_status] || 'default'} style={{ fontSize: 11 }}>
-              {record.ai_quality_status === 'auto_approved' ? '通过' : record.ai_quality_status === 'auto_rejected' ? '拒绝' : record.ai_quality_status === 'needs_review' ? '待审' : record.ai_quality_status}
-            </Tag>
-          </Space>
-        )
-      },
-    },
-    {
       title: '质量',
       dataIndex: 'quality_status',
       width: 140,
@@ -265,63 +230,6 @@ export default function TrajectoryList() {
       message.success('导出成功')
     } catch {
       message.error('导出失败')
-    }
-  }
-
-  const handleCompareSubmit = async () => {
-    const values = await compareForm.validateFields()
-    const selectedSessions = selectedRowKeys.map(String)
-    if (!selectedSessions.length) {
-      message.warning('请先选择至少一条轨迹')
-      return
-    }
-
-    let groupId = values.group_id as number | undefined
-    if (!groupId && !values.new_group_name) {
-      message.error('请选择已有对比组，或输入新对比组名称')
-      return
-    }
-
-    setCompareSaving(true)
-    try {
-      if (!groupId) {
-        const created = await createCompareGroup({
-          name: values.new_group_name,
-          description: values.new_group_description,
-          task_prompt: values.new_group_task_prompt,
-        })
-        groupId = created.id
-      }
-
-      await addCompareGroupItems(groupId, selectedSessions)
-      message.success(`已添加 ${selectedSessions.length} 条轨迹到对比组`)
-      setCompareOpen(false)
-      setSelectedRowKeys([])
-      compareForm.resetFields()
-      await queryClient.invalidateQueries({ queryKey: ['compare-groups'] })
-    } catch {
-      message.error('添加到对比组失败')
-    } finally {
-      setCompareSaving(false)
-    }
-  }
-
-  const handleBatchScore = async (sessionIds?: Key[], statusFilter?: string) => {
-    setBatchScoring(true)
-    try {
-      const payload: Record<string, unknown> = { run_heuristic: true, limit: 500 }
-      if (sessionIds?.length) {
-        payload.session_ids = sessionIds.map(String)
-      } else if (statusFilter) {
-        payload.ai_quality_status = statusFilter
-      }
-      const result = await batchScore(payload)
-      message.success(`已提交 ${result.count ?? 0} 条轨迹评分`)
-      await queryClient.invalidateQueries({ queryKey: ['trajectories'] })
-    } catch {
-      message.error('批量评分失败')
-    } finally {
-      setBatchScoring(false)
     }
   }
 
@@ -431,31 +339,6 @@ export default function TrajectoryList() {
               updateFilter('end_date', undefined)
             }}
           />
-          <Select
-            placeholder="AI 等级"
-            allowClear
-            style={{ width: 120 }}
-            options={[
-              { value: 'A', label: 'A (80-100)' },
-              { value: 'B', label: 'B (70-79)' },
-              { value: 'C', label: 'C (40-69)' },
-              { value: 'D', label: 'D (20-39)' },
-              { value: 'F', label: 'F (0-19)' },
-            ]}
-            onChange={value => updateFilter('ai_grade', value)}
-          />
-          <Select
-            placeholder="AI 状态"
-            allowClear
-            style={{ width: 140 }}
-            options={[
-              { value: 'auto_approved', label: 'AI 通过' },
-              { value: 'auto_rejected', label: 'AI 拒绝' },
-              { value: 'needs_review', label: '待人工审' },
-              { value: 'pending', label: '未评分' },
-            ]}
-            onChange={value => updateFilter('ai_quality_status', value)}
-          />
         </Space>
       </Card>
 
@@ -468,27 +351,11 @@ export default function TrajectoryList() {
             <Button onClick={() => setBatchOpen(true)} disabled={!selectedRowKeys.length}>
               批量标注
             </Button>
-            <Button onClick={() => setCompareOpen(true)} disabled={!selectedRowKeys.length}>
-              添加到对比组
-            </Button>
             <Button onClick={handleExport} disabled={!selectedRowKeys.length}>
               导出 .traj
             </Button>
             <Button onClick={() => setSftOpen(true)}>
               导出 SFT
-            </Button>
-            <Button
-              loading={batchScoring}
-              disabled={!selectedRowKeys.length}
-              onClick={() => handleBatchScore(selectedRowKeys)}
-            >
-              批量 AI 评分
-            </Button>
-            <Button
-              loading={batchScoring}
-              onClick={() => handleBatchScore(undefined, 'pending')}
-            >
-              评分所有待评
             </Button>
           </Space>
         </div>
@@ -512,7 +379,7 @@ export default function TrajectoryList() {
         }}
         onChange={handleTableChange}
         size="small"
-        scroll={{ x: 1480 }}
+        scroll={{ x: 1280 }}
       />
 
       <Modal
@@ -550,40 +417,6 @@ export default function TrajectoryList() {
           </Form.Item>
           <Form.Item name="tags" label="标签">
             <Select mode="tags" placeholder="输入一个或多个标签" />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal
-        title="添加到对比组"
-        open={compareOpen}
-        onOk={handleCompareSubmit}
-        confirmLoading={compareSaving}
-        onCancel={() => setCompareOpen(false)}
-        destroyOnHidden
-      >
-        <Form form={compareForm} layout="vertical">
-          <Form.Item name="group_id" label="选择已有对比组">
-            <Select
-              allowClear
-              placeholder="选择一个对比组"
-              options={(compareGroups?.items ?? []).map(item => ({
-                value: item.id,
-                label: `${item.name}（${item.item_count} 条）`,
-              }))}
-            />
-          </Form.Item>
-          <Typography.Text style={{ color: '#8c8c8c' }}>
-            如果不选已有对比组，可以直接创建新的。
-          </Typography.Text>
-          <Form.Item name="new_group_name" label="新对比组名称" style={{ marginTop: 12 }}>
-            <Input placeholder="例如：修复 login bug" />
-          </Form.Item>
-          <Form.Item name="new_group_task_prompt" label="任务提示词">
-            <Input.TextArea rows={3} placeholder="例如：修复登录页面空指针异常" />
-          </Form.Item>
-          <Form.Item name="new_group_description" label="说明">
-            <Input.TextArea rows={3} placeholder="记录对比背景和差异点" />
           </Form.Item>
         </Form>
       </Modal>

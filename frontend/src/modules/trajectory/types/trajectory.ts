@@ -23,10 +23,6 @@ export interface TrajectoryListItem {
   project_name: string
   tags: string[]
   user_id: string | null
-  // AI 评分
-  ai_score: number | null
-  ai_grade: string
-  ai_quality_status: string
 }
 
 export interface TrajectoryMeta extends TrajectoryListItem {
@@ -151,91 +147,4 @@ export interface TrajectoryBatchUpdateResponse {
   status: string
   updated_count: number
   session_ids: string[]
-}
-
-/** AI 评分详情 */
-export interface ScoringDetail {
-  session_id: string
-  ai_score: number | null
-  ai_grade: string
-  ai_quality_status: string
-  rule_score: number | null
-  rule_details: Record<string, number>
-  rule_flags: string[]
-  heuristic_score: number | null
-  heuristic_details: Record<string, number>
-  heuristic_patterns: string[]
-  llm_score: number | null
-  llm_details: Record<string, number>
-  llm_reasoning: string
-  llm_suggested_task_type: string
-  llm_eval_model: string
-  scored_at: string | null
-  score_version: number
-}
-
-/** AI 评分统计 */
-export interface ScoringStatsResponse {
-  status_distribution: Record<string, number>
-  grade_distribution: Record<string, number>
-  avg_score: number
-  total_scored: number
-  total_pending: number
-}
-
-export interface CompareGroupListItem {
-  id: number
-  name: string
-  description: string
-  task_prompt: string
-  created_at: string
-  item_count: number
-  tool_sources: string[]
-}
-
-export interface CompareGroupListResponse {
-  items: CompareGroupListItem[]
-}
-
-export interface CompareTrajectoryItem {
-  trajectory_id: number
-  session_id: string
-  tool_source: string
-  model: string
-  start_time: string | null
-  duration_ms: number | null
-  total_steps: number
-  total_tokens: number
-  total_cost_usd: number
-  exit_status: string
-  quality_status: string
-  first_prompt: string
-  tools_used: string[]
-  tool_usage: Record<string, number>
-}
-
-export interface CompareGroupDetailResponse {
-  id: number
-  name: string
-  description: string
-  task_prompt: string
-  created_at: string
-  item_count: number
-  items: CompareTrajectoryItem[]
-}
-
-export interface CompareRadarItem {
-  trajectory_id: number
-  session_id: string
-  tool_source: string
-  model: string
-  values: Array<number | string>
-  normalized: number[]
-}
-
-export interface CompareRadarResponse {
-  group_id: number
-  group_name: string
-  dimensions: string[]
-  items: CompareRadarItem[]
 }

@@ -39,7 +39,6 @@ SORTABLE_FIELDS = {
     "total_cost_usd": Trajectory.total_cost_usd,
     "duration_ms": Trajectory.duration_ms,
     "uploaded_at": Trajectory.uploaded_at,
-    "ai_score": Trajectory.ai_score,
 }
 
 
@@ -58,10 +57,6 @@ async def list_trajectories(
     end_date: Optional[str] = None,
     min_steps: Optional[int] = None,
     max_steps: Optional[int] = None,
-    ai_quality_status: Optional[str] = None,
-    ai_grade: Optional[str] = None,
-    min_ai_score: Optional[int] = None,
-    max_ai_score: Optional[int] = None,
     sort: str = "-start_time",
     db: AsyncSession = Depends(get_db),
 ):
@@ -84,15 +79,6 @@ async def list_trajectories(
         filters.append(Trajectory.total_steps >= min_steps)
     if max_steps is not None:
         filters.append(Trajectory.total_steps <= max_steps)
-    if ai_quality_status:
-        filters.append(Trajectory.ai_quality_status == ai_quality_status)
-    if ai_grade:
-        grades = [g.strip() for g in ai_grade.split(",")]
-        filters.append(Trajectory.ai_grade.in_(grades))
-    if min_ai_score is not None:
-        filters.append(Trajectory.ai_score >= min_ai_score)
-    if max_ai_score is not None:
-        filters.append(Trajectory.ai_score <= max_ai_score)
 
     for f in filters:
         query = query.where(f)
@@ -414,9 +400,6 @@ def _to_list_item(r: Trajectory) -> TrajectoryListItem:
         project_name=r.project_name,
         tags=_parse_json_field(r.tags),
         user_id=r.user_id,
-        ai_score=r.ai_score,
-        ai_grade=r.ai_grade or "",
-        ai_quality_status=r.ai_quality_status or "pending",
     )
 
 
