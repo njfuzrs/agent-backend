@@ -42,7 +42,7 @@ agent-backend/
 │   ├── app/
 │   │   ├── main.py         # 只做装配：CORS + 路由注册 + 启动时 schema 版本检查
 │   │   ├── core/           # 平台内核
-│   │   │   ├── config.py       # 分段配置（DataPlane/ControlPlane/Storage/Scoring）
+│   │   │   ├── config.py       # 分段配置（DataPlane/ControlPlane/Storage）
 │   │   │   ├── db.py           # 引擎 + session（不再建表，schema 归 Alembic）
 │   │   │   ├── auth/
 │   │   │   │   ├── data_plane.py     # Basic Auth + Upload Token（含冻结区鉴权）
@@ -51,10 +51,10 @@ agent-backend/
 │   │   │   └── router/auth.py   # /auth/login、/logout、/me
 │   │   └── modules/        # 业务模块 = 一组内聚的表 + 一个路由前缀 + 一条鉴权链
 │   │       ├── trajectory/     # 模块一：轨迹存储与分析（已交付）
-│   │       │   ├── model.py    # ORM 模型（4 张表）
+│   │       │   ├── model.py    # ORM 模型（trajectories / tool_steps）
 │   │       │   ├── schemas.py  # Pydantic 模型
-│   │       │   ├── router/     # upload / trajectories / stats / compare / export / scoring
-│   │       │   └── service/    # storage / traj_parser / tool_steps / stats_service / scoring
+│   │       │   ├── router/     # upload / trajectories / stats / export
+│   │       │   └── service/    # storage / traj_parser / tool_steps / stats_service
 │   │       └── identity/       # 模块二：设备注册与凭据（M1）
 │   │           ├── model.py    # organizations / teams / devices / device_credentials / enroll_codes
 │   │           ├── schemas.py
@@ -64,9 +64,9 @@ agent-backend/
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   ├── src/
-│   │   ├── App.tsx         # 外壳 + 导航 + 登录框（产品名 Agent Backend）
+│   │   ├── App.tsx         # 外壳 + 导航 + 登录守卫（产品名 Agent Backend）
 │   │   ├── modules/trajectory/   # 与后端同构分模块
-│   │   │   ├── pages/       # TrajectoryList / TrajectoryDetail / Dashboard / Compare*
+│   │   │   ├── pages/       # TrajectoryList / TrajectoryDetail / Dashboard
 │   │   │   ├── components/  # Timeline, ToolCallBlock, ThinkingBlock ...
 │   │   │   ├── services/    # api.ts（cookie 会话，凭据不进 localStorage）
 │   │   │   └── types/       # trajectory.ts
@@ -94,7 +94,7 @@ agent-backend/
 - **数据库兼容**：`core/db.py` 根据 `DATABASE_URL` 前缀自动选择驱动，SQLite 模式自动执行 WAL pragma
 - **schema 演进只有一条路**：`alembic upgrade head`。原 `init_db()` 的 `create_all` + `_migrate_sqlite_columns()` 已删除 —— 前者不改已有表的列，后者被 `is_sqlite` 挡住（生产是 PG，等于生产无加列路径）。运行时代码不得建表，由边界测试拦截
 - **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`（签发入口 `/ctl/enroll` 除外，走一次性注册码），由边界测试反射检查
-- **管理台凭据不落 localStorage**：登录走 `/api/v1/auth/login` 下发 HttpOnly + SameSite cookie（无状态 HMAC 签名，跨 worker 有效）。Basic Auth 保留给脚本与 curl
+- **管理台凭据不落 localStorage**：独立登录页走 `/api/v1/auth/login` 下发 HttpOnly + SameSite cookie（无状态 HMAC 签名，跨 worker 有效）。未登录或 401 跳 `/login`。Basic Auth 保留给脚本与 curl
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400
 - **文件格式兼容**：读取时自动尝试 `.gz` 和非 `.gz` 格式，兼容迁移前的旧数据

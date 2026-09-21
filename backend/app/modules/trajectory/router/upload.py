@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,9 +15,6 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.modules.trajectory.model import Trajectory
 from app.modules.trajectory.schemas import UploadResponse
-from app.modules.trajectory.service.scoring.engine import SCORE_VERSION, _persist_result, _score_to_grade
-from app.modules.trajectory.service.scoring.models import ScoringResult
-from app.modules.trajectory.service.scoring.rule_scorer import score_by_rules
 from app.modules.trajectory.service.storage import compute_sha256, storage
 from app.modules.trajectory.service.tool_steps import sync_tool_steps
 from app.modules.trajectory.service.traj_parser import parse_traj_content
@@ -36,7 +33,6 @@ _FILE_TYPE_MAP = {
 
 @router.post("/session-file", dependencies=[Depends(verify_upload_token)])
 async def upload_session_file(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session_id: str = Form(...),
     file_type: str = Form(...),
@@ -122,10 +118,7 @@ async def upload_session_file(
                     setattr(existing, key, value)
             await db.flush()
             await sync_tool_steps(db, existing, traj_data)
-            needs_heuristic = _auto_rule_score(existing)
             await db.commit()
-            if needs_heuristic:
-                background_tasks.add_task(_run_heuristic_score, session_id)
             return UploadResponse(session_id=session_id, status="updated",
                                   metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
@@ -133,10 +126,7 @@ async def upload_session_file(
         db.add(record)
         await db.flush()
         await sync_tool_steps(db, record, traj_data)
-        needs_heuristic = _auto_rule_score(record)
         await db.commit()
-        if needs_heuristic:
-            background_tasks.add_task(_run_heuristic_score, session_id)
         return UploadResponse(session_id=session_id, status="created",
                               metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
@@ -147,7 +137,6 @@ async def upload_session_file(
 
 @router.post("/traj", response_model=UploadResponse, dependencies=[Depends(verify_upload_token)])
 async def upload_traj(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     tool_source: str = Form("claude-code"),
     project_name: str = Form(""),
@@ -203,10 +192,7 @@ async def upload_traj(
                 setattr(existing, key, value)
         await db.flush()
         await sync_tool_steps(db, existing, traj_data)
-        needs_heuristic = _auto_rule_score(existing)
         await db.commit()
-        if needs_heuristic:
-            background_tasks.add_task(_run_heuristic_score, session_id)
         return UploadResponse(session_id=session_id, status="updated",
                               metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
@@ -214,17 +200,13 @@ async def upload_traj(
     db.add(record)
     await db.flush()
     await sync_tool_steps(db, record, traj_data)
-    needs_heuristic = _auto_rule_score(record)
     await db.commit()
-    if needs_heuristic:
-        background_tasks.add_task(_run_heuristic_score, session_id)
     return UploadResponse(session_id=session_id, status="created",
                           metadata=_summary(parsed), sha256=server_hash, oss_key=storage_key)
 
 
 @router.post("/batch", dependencies=[Depends(verify_upload_token)])
 async def upload_batch(
-    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     tool_source: str = Form("claude-code"),
     force: bool = Query(False),
@@ -262,16 +244,12 @@ async def upload_batch(
                         setattr(existing, key, value)
                 await db.flush()
                 await sync_tool_steps(db, existing, traj_data)
-                if _auto_rule_score(existing):
-                    background_tasks.add_task(_run_heuristic_score, session_id)
                 results.append({"session_id": session_id, "status": "updated"})
             else:
                 record = Trajectory(**parsed)
                 db.add(record)
                 await db.flush()
                 await sync_tool_steps(db, record, traj_data)
-                if _auto_rule_score(record):
-                    background_tasks.add_task(_run_heuristic_score, session_id)
                 results.append({"session_id": session_id, "status": "created"})
 
         except Exception as e:
@@ -379,53 +357,3 @@ def _summary(parsed: dict) -> dict:
         "exit_status": parsed.get("exit_status", ""),
         "first_prompt": parsed.get("first_prompt", "")[:100],
     }
-
-
-def _auto_rule_score(traj: Trajectory) -> bool:
-    """上传后同步执行第一层规则评分（毫秒级，不阻塞）。
-
-    返回 True 表示需要继续执行第二层启发式评分。
-    """
-    if not settings.SCORING_AUTO_ON_UPLOAD:
-        return False
-    try:
-        rule_result = score_by_rules(traj)
-        grade_score = min(rule_result.rule_score, 39) if rule_result.skip_further else rule_result.rule_score
-        result = ScoringResult(
-            ai_score=rule_result.rule_score,
-            ai_grade=_score_to_grade(grade_score),
-            ai_quality_status="auto_rejected" if rule_result.skip_further else "pending",
-            rule=rule_result,
-            score_version=SCORE_VERSION,
-        )
-        _persist_result(traj, result)
-        # 有致命 flag 时不需要继续评分
-        return not rule_result.skip_further
-    except Exception:
-        return False
-
-
-async def _run_heuristic_score(session_id: str) -> None:
-    """后台异步执行第二层启发式评分。"""
-    from app.core.db import async_session
-    from app.modules.trajectory.service.scoring.engine import score_trajectory
-
-    try:
-        async with async_session() as db:
-            result = await db.execute(
-                select(Trajectory)
-                .where(Trajectory.session_id == session_id)
-                .where(Trajectory.deleted_at.is_(None))
-            )
-            traj = result.scalar_one_or_none()
-            if traj:
-                await score_trajectory(
-                    traj, db,
-                    run_heuristic=True,
-                    run_llm=False,
-                )
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(
-            "异步启发式评分失败 session_id=%s: %s", session_id, e
-        )

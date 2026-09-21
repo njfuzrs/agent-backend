@@ -252,20 +252,8 @@ FROZEN_ROUTES = [
     ("/api/v1/stats/tools", "GET"),
     ("/api/v1/stats/models", "GET"),
     ("/api/v1/stats/cost", "GET"),
-    ("/api/v1/compare/groups", "GET"),
-    ("/api/v1/compare/groups", "POST"),
-    ("/api/v1/compare/groups/{group_id}", "GET"),
-    ("/api/v1/compare/groups/{group_id}", "DELETE"),
-    ("/api/v1/compare/groups/{group_id}/items", "POST"),
-    ("/api/v1/compare/groups/{group_id}/items/{trajectory_id}", "DELETE"),
-    ("/api/v1/compare/groups/{group_id}/radar", "GET"),
     ("/api/v1/export/trajectories", "POST"),
     ("/api/v1/export/sft", "POST"),
-    ("/api/v1/scoring/stats", "GET"),
-    ("/api/v1/scoring/batch", "POST"),
-    ("/api/v1/scoring/rescore-all", "POST"),
-    ("/api/v1/scoring/score/{session_id}", "POST"),
-    ("/api/v1/scoring/{session_id}", "GET"),
 ]
 
 

@@ -6,8 +6,8 @@
    缺失即 fail-fast 退出。理由：有默认值意味着「配置漏了也能启动」，
    而启动起来的是一个密码为 `changeme` 的公网服务。
 
-2. **按模块分段。** 拆成 DataPlaneSettings / ControlPlaneSettings / StorageSettings /
-   ScoringSettings，避免后续 6 个模块的配置项全平铺在一个类里。
+2. **按模块分段。** 拆成 DataPlaneSettings / ControlPlaneSettings / StorageSettings，
+   避免后续 6 个模块的配置项全平铺在一个类里。
 
 分段是**代码组织**上的分段，环境变量名保持扁平不变（`AUTH_PASSWORD`、`OSS_ENDPOINT`……），
 所以线上 `.env` 不需要改动。每个分段自己读 `.env`，互不干扰。
@@ -88,20 +88,6 @@ class StorageSettings(BaseSettings):
     OSS_CACHE_MAX_SIZE_MB: int = 1024
 
 
-class ScoringSettings(BaseSettings):
-    """AI 评分（轨迹模块内部能力）。"""
-
-    model_config = _ENV
-
-    SCORING_AUTO_ON_UPLOAD: bool = True
-    SCORING_LLM_BASE_URL: str = ""
-    SCORING_LLM_API_KEY: str = ""
-    SCORING_LLM_MODEL: str = "gpt-4o-mini"
-    SCORING_THRESHOLD_APPROVED: int = 70
-    SCORING_THRESHOLD_REJECTED: int = 40
-    SCORING_BATCH_CONCURRENCY: int = 5
-
-
 class Settings(BaseSettings):
     """顶层配置。分段通过属性暴露，同时保留扁平访问（`settings.OSS_ENDPOINT`）向后兼容。"""
 
@@ -122,7 +108,6 @@ class Settings(BaseSettings):
         self._data_plane = DataPlaneSettings()
         self._control_plane = ControlPlaneSettings()
         self._storage = StorageSettings()
-        self._scoring = ScoringSettings()
 
     # ---- 分段访问（新代码用这个）----
     @property
@@ -137,13 +122,9 @@ class Settings(BaseSettings):
     def storage(self) -> StorageSettings:
         return self._storage
 
-    @property
-    def scoring(self) -> ScoringSettings:
-        return self._scoring
-
     # ---- 扁平访问（存量代码用这个，行为与分段前逐字一致）----
     def __getattr__(self, name: str):
-        for seg in ("_data_plane", "_control_plane", "_storage", "_scoring"):
+        for seg in ("_data_plane", "_control_plane", "_storage"):
             seg_obj = self.__dict__.get(seg)
             if seg_obj is not None and name in type(seg_obj).model_fields:
                 return getattr(seg_obj, name)

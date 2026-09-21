@@ -11,7 +11,7 @@ sid-code 与 claude-trace 共同面对的企业级后端：控制面（policy / 
 **有（已交付）**
 
 - 轨迹上传冻结区：`POST /api/v1/upload/session-file`、`GET /api/v1/health`（sid-code / claude-trace 线上在用，改了就断采集）
-- 浏览 / 搜索 / 标注前端（轨迹、对比、仪表盘）
+- 浏览 / 搜索 / 标注前端（轨迹、仪表盘、独立登录页）
 - 双平面鉴权：数据面走 `X-Upload-Token` / Basic Auth / 管理台 cookie；控制面走设备凭据 `Authorization: Bearer`，两条链互不引用
 - 设备身份：一次性注册码换凭据（`POST /api/v1/ctl/enroll`），`require_device` 查 hash、拒吊销/过期
 

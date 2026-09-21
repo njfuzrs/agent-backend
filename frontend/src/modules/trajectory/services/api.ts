@@ -2,9 +2,6 @@
 
 import axios from 'axios'
 import type {
-  CompareGroupDetailResponse,
-  CompareGroupListResponse,
-  CompareRadarResponse,
   HistoryEntry,
   CostStatsResponse,
   DistributionResponse,
@@ -29,6 +26,30 @@ const api = axios.create({
 })
 
 const TRAJECTORY_STEPS_BATCH_SIZE = 200
+
+function redirectToLogin() {
+  const basename = '/traj'
+  const fullPath = window.location.pathname
+  const appPath = fullPath.startsWith(basename)
+    ? fullPath.slice(basename.length) || '/'
+    : fullPath
+  if (appPath.startsWith('/login')) return
+  const from = encodeURIComponent(appPath + window.location.search)
+  window.location.assign(`${basename}/login?from=${from}`)
+}
+
+api.interceptors.response.use(
+  response => response,
+  error => {
+    const status = error.response?.status
+    const url = String(error.config?.url || '')
+    const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/me')
+    if (status === 401 && !isAuthEndpoint) {
+      redirectToLogin()
+    }
+    return Promise.reject(error)
+  }
+)
 
 /** 登录：服务端校验后下发 HttpOnly cookie。口令只在本次请求体里出现，不落盘。 */
 export async function login(username: string, password: string): Promise<void> {
@@ -188,83 +209,9 @@ export async function exportSFT(payload: Record<string, unknown>): Promise<Blob>
   return data
 }
 
-/** 对比组列表 */
-export async function fetchCompareGroups(): Promise<CompareGroupListResponse> {
-  const { data } = await api.get('/compare/groups')
-  return data
-}
-
-/** 创建对比组 */
-export async function createCompareGroup(payload: Record<string, unknown>): Promise<CompareGroupDetailResponse> {
-  const { data } = await api.post('/compare/groups', payload)
-  return data
-}
-
-/** 删除对比组 */
-export async function deleteCompareGroup(groupId: number) {
-  const { data } = await api.delete(`/compare/groups/${groupId}`)
-  return data
-}
-
-/** 对比组详情 */
-export async function fetchCompareGroupDetail(groupId: number): Promise<CompareGroupDetailResponse> {
-  const { data } = await api.get(`/compare/groups/${groupId}`)
-  return data
-}
-
-/** 添加轨迹到对比组 */
-export async function addCompareGroupItems(groupId: number, sessionIds: string[]) {
-  const { data } = await api.post(`/compare/groups/${groupId}/items`, { session_ids: sessionIds })
-  return data
-}
-
-/** 从对比组移除轨迹 */
-export async function removeCompareGroupItem(groupId: number, trajectoryId: number) {
-  const { data } = await api.delete(`/compare/groups/${groupId}/items/${trajectoryId}`)
-  return data
-}
-
-/** 雷达图数据 */
-export async function fetchCompareRadar(groupId: number): Promise<CompareRadarResponse> {
-  const { data } = await api.get(`/compare/groups/${groupId}/radar`)
-  return data
-}
-
 /** 健康检查 */
 export async function healthCheck() {
   const { data } = await api.get('/health')
-  return data
-}
-
-/** 单条轨迹 AI 评分 */
-export async function scoreTrajectory(sessionId: string, runHeuristic = true, runLlm = false) {
-  const { data } = await api.post(`/scoring/score/${sessionId}`, null, {
-    params: { run_heuristic: runHeuristic, run_llm: runLlm },
-  })
-  return data
-}
-
-/** 批量 AI 评分 */
-export async function batchScore(payload: Record<string, unknown>) {
-  const { data } = await api.post('/scoring/batch', payload)
-  return data
-}
-
-/** 评分统计 */
-export async function fetchScoringStats() {
-  const { data } = await api.get('/scoring/stats')
-  return data
-}
-
-/** 评分详情 */
-export async function fetchScoreDetail(sessionId: string) {
-  const { data } = await api.get(`/scoring/${sessionId}`)
-  return data
-}
-
-/** 全量重新评分 */
-export async function rescoreAll(params: { run_heuristic?: boolean; run_llm?: boolean } = {}) {
-  const { data } = await api.post('/scoring/rescore-all', null, { params })
   return data
 }
 

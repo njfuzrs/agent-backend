@@ -13,7 +13,6 @@ import {
 } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import AiScoreDetail from '../components/AiScoreDetail'
 import HistoryChatView from '../components/HistoryChatView'
 import QualityRating from '../components/QualityRating'
 import RawJsonPane from '../components/RawJsonPane'
@@ -125,8 +124,6 @@ export default function TrajectoryDetail() {
       </div>
 
       <MetaCard meta={meta} statusInfo={statusInfo} />
-
-      <AiScoreDetail sessionId={sessionId!} />
 
       <Card title="质量标注" size="small">
         <div style={{ display: 'grid', gap: 16 }}>
