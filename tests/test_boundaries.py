@@ -15,6 +15,7 @@
     ④ 冻结区路径不得变更（快照测试）
     ⑤ enroll 不得走数据面凭据
     ⑥ 无认证豁免名单是白名单，且每个豁免项的代价可机械检查
+    ⑦ /ctl/policy 挂 require_device、只读；/api/v1/policies 挂 cookie 会话
 """
 
 import ast
@@ -461,6 +462,68 @@ def test_flag_guard_rejects_permission_widening_keys():
     # 正常的「施加约束」类 flag 必须放行
     for key in ["content_tracing", "sink_killswitch", "event_sampling_config", "max_turns_limit"]:
         assert validate_key(key) == key
+
+
+
+def test_ctl_policy_requires_device():
+    """GET /ctl/policy 必须挂 require_device，且不在豁免名单。
+
+    规划 §4 M3 / 假门禁对策：无认证 policy 等于明文下发 disableAllHooks。
+    本条先故意漏挂时必须红，再改回来。
+    """
+    from app.core.auth.control_plane import require_device
+    from app.main import app
+
+    found = False
+    for path, methods, dependant in _iter_app_routes(app):
+        if (path.rstrip("/") or path) != "/api/v1/ctl/policy":
+            continue
+        found = True
+        assert "GET" in methods
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        assert any(getattr(d, "call", None) is require_device for d in deps), (
+            "/api/v1/ctl/policy 没挂 require_device。不要把它加进 CTL_AUTH_EXEMPTIONS。"
+        )
+        assert ("GET", "/api/v1/ctl/policy") not in CTL_AUTH_EXEMPTIONS
+    assert found, "/api/v1/ctl/policy 端点不存在"
+
+
+def test_ctl_policy_is_read_only():
+    """/ctl/policy 不得有写方法。写口在 /api/v1/policies/**（cookie 会话）。"""
+    from app.main import app
+
+    write_methods = set()
+    for path, methods, _dependant in _iter_app_routes(app):
+        if (path.rstrip("/") or path) != "/api/v1/ctl/policy":
+            continue
+        write_methods |= {m for m in methods if m in {"POST", "PUT", "PATCH", "DELETE"}}
+
+    assert not write_methods, (
+        f"/ctl/policy 不得有写方法: {sorted(write_methods)}。"
+        "写口在 /api/v1/policies/**（require_web_session）"
+    )
+
+
+def test_policy_admin_writes_require_web_session():
+    """policy 管理台必须挂 require_web_session，且不在 /ctl/ 下。"""
+    from app.core.auth.session import require_web_session
+    from app.main import app
+
+    checked = 0
+    offenders = []
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/policies"):
+            continue
+        assert "/ctl/" not in path, f"管理台 policy 端点不得挂在 /ctl/ 下: {path}"
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        if not any(getattr(d, "call", None) is require_web_session for d in deps):
+            offenders.append(f"{','.join(sorted(methods))} {path}")
+        checked += 1
+
+    assert checked > 0, "没找到 /api/v1/policies 管理端点 —— policy 模块是否没注册？"
+    assert not offenders, (
+        "以下 policy 管理端点没挂 require_web_session:\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_no_create_all_in_runtime_code():

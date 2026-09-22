@@ -225,6 +225,11 @@ jobs:
           echo "compare $code"
           test "$code" = 404
 
+          # 无 Bearer 必须 401：端点存在、挂了鉴权、不是 404（忘注册）、不是 200（误做成无认证）。
+          code="$(curl_code "$BASE/api/v1/ctl/policy")"
+          echo "policy $code"
+          test "$code" = 401
+
           # 2026-09-22 起 IP :80 明文内容通道关（410）。
           # 不跟随 3xx：禁止 301 到 https://IP（证书不含 IP，那是 2026-08-05 的死锁）。
           ip_code="$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ip -w '%{http_code}' "http://${DEPLOY_HOST}/traj/api/v1/health")"

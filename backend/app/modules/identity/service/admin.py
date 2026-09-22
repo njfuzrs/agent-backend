@@ -1,5 +1,8 @@
 """组织 / 注册码 / 设备列表。供管理台调用，不走控制面 Bearer。"""
 
+from dataclasses import dataclass
+from typing import Optional
+
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +24,52 @@ from app.modules.identity.schemas import (
     RevokeResponse,
 )
 from app.modules.identity.service.secrets import hash_secret, mint_enroll_code
+
+
+@dataclass(frozen=True)
+class DeviceRef:
+    """给其它模块用的设备摘要。不暴露 ORM，避免跨模块 import model。"""
+
+    device_id: str
+    org_id: str
+    team_id: str = ""
+
+
+async def get_organization(db: AsyncSession, org_id: str) -> Optional[OrganizationItem]:
+    """按对外 slug 查组织。policy 创建时校验 scope 存在，只调这个，不 import model。"""
+    row = await db.execute(select(Organization).where(Organization.org_id == org_id))
+    org = row.scalar_one_or_none()
+    if org is None:
+        return None
+    return OrganizationItem(org_id=org.org_id, name=org.name, created_at=org.created_at, device_count=0)
+
+
+async def get_team(db: AsyncSession, org_id: str, team_id: str) -> Optional[str]:
+    """组织内 slug。team_id 只在组织内唯一，必须带 org 收窄。"""
+    row = await db.execute(
+        select(Team)
+        .join(Organization, Team.organization_id == Organization.id)
+        .where(Organization.org_id == org_id, Team.team_id == team_id)
+    )
+    team = row.scalar_one_or_none()
+    return team.team_id if team is not None else None
+
+
+async def get_device(db: AsyncSession, device_id: str) -> Optional[DeviceRef]:
+    """按对外 device_id 查，带当前所属 org/team。"""
+    row = await db.execute(
+        select(Device)
+        .options(selectinload(Device.organization), selectinload(Device.team))
+        .where(Device.device_id == device_id)
+    )
+    device = row.scalar_one_or_none()
+    if device is None:
+        return None
+    return DeviceRef(
+        device_id=device.device_id,
+        org_id=device.organization.org_id if device.organization else "",
+        team_id=device.team.team_id if device.team else "",
+    )
 
 
 async def create_organization(db: AsyncSession, payload: OrganizationCreate) -> OrganizationItem:

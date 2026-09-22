@@ -21,6 +21,8 @@ from app.modules.flag.router import flags as flag_serve
 from app.modules.identity.router import admin as identity_admin
 from app.modules.identity.router import enroll as identity_enroll
 from app.modules.identity.router import whoami as identity_whoami
+from app.modules.policy.router import admin as policy_admin
+from app.modules.policy.router import serve as policy_serve
 from app.modules.trajectory.router import (
     export,
     stats,
@@ -94,10 +96,12 @@ app.include_router(export.router, prefix="/api/v1")
 app.include_router(identity_enroll.router, prefix="/api/v1")
 app.include_router(identity_whoami.router, prefix="/api/v1")
 app.include_router(flag_serve.router, prefix="/api/v1")
+app.include_router(policy_serve.router, prefix="/api/v1")
 
-# ---- 管理台：身份 / flag（cookie 会话，给人看，不给客户端下发策略）----
+# ---- 管理台：身份 / flag / policy（cookie 会话，给人看，不给客户端下发策略）----
 app.include_router(identity_admin.router, prefix="/api/v1")
 app.include_router(flag_admin.router, prefix="/api/v1")
+app.include_router(policy_admin.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)
