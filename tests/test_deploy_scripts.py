@@ -230,6 +230,9 @@ def test_deploy_yml_contract():
     assert "/traj/api/v1/health" in text
     assert "$BASE/login" in text
     assert "121.196.144.227" not in text
+    # 2026-09-22 起 IP 明文必须 410，不能再当 200 救生通道
+    assert 'test "$ip_code" = 410' in text
+    assert 'test "$ip_code" = 200' not in text
     assert "mv /opt" not in body
     assert "sid-code-locations.conf" not in body
     assert "/etc/systemd/system" not in body
