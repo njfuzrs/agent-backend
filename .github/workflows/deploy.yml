@@ -10,7 +10,7 @@
 #   - 不把 AUTH_PASSWORD / UPLOAD_TOKEN / SESSION_SECRET / DATABASE_URL / OSS AK 放进 GitHub
 #   - 不 mv /opt、不改 nginx、不覆盖 systemd unit；只 ssh 调 deploy/release.sh
 #   - StrictHostKeyChecking 必须 yes，known_hosts 来自 Environment secret
-#   - 冒烟 URL 永远是 https://www.sid-code.cc/traj/ ；IP 通道用 DEPLOY_HOST，不写进仓库默认值
+#   - 冒烟 URL 永远是 https://www.sid-code.cc/traj/ ；IP 明文（DEPLOY_HOST :80）2026-09-22 起必须 410，禁止 301 到 https://IP
 
 name: Deploy
 
@@ -197,7 +197,7 @@ jobs:
 
           "${SSH[@]}" "$TARGET" "bash $(printf '%q' "$STAGE/deploy/release.sh") $(printf '%q' "$SHA") --source $(printf '%q' "$STAGE")"
 
-      - name: 冒烟 HTTPS + IP 通道
+      - name: 冒烟 HTTPS；IP 明文 410
         run: |
           set -euo pipefail
           BASE="https://www.sid-code.cc/traj"
@@ -225,15 +225,16 @@ jobs:
           echo "compare $code"
           test "$code" = 404
 
-          # 不跟随 3xx：IP :80 若被 301 到 HTTPS，老二进制会因证书不含 IP 而死锁
+          # 2026-09-22 起 IP :80 明文内容通道关（410）。
+          # 不跟随 3xx：禁止 301 到 https://IP（证书不含 IP，那是 2026-08-05 的死锁）。
           ip_code="$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ip -w '%{http_code}' "http://${DEPLOY_HOST}/traj/api/v1/health")"
           echo "IP health $ip_code"
-          test "$ip_code" = 200
-          grep -q '"status":"ok"' /tmp/smoke-ip
+          test "$ip_code" = 410
+          grep -q 'https://www.sid-code.cc' /tmp/smoke-ip
 
           SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
           "${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" 'curl -fsS --max-time 10 http://127.0.0.1:8900/api/v1/health'
-          echo "smoke http ok SHA=$SHA"
+          echo "smoke https ok SHA=$SHA"
 
       - name: 可选 SMOKE_BASIC（登录后列表）
         env:
