@@ -234,9 +234,13 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
 done
 [[ "$ok" == "1" ]] || die "http://127.0.0.1:8900/api/v1/health 连续失败"
 
-log "health nginx /traj/api"
-curl -fsS http://127.0.0.1/traj/api/v1/health >/dev/null \
-  || die "http://127.0.0.1/traj/api/v1/health 失败（nginx 反代）"
+# 2026-09-22 起 IP/未知 Host 的 :80 是整块 410。本机 curl 不带 Host
+# 会走 default_server，再打 http://127.0.0.1/traj/ 就是 410（#20 合入后
+# 第一次 Deploy 在这里红）。反代是否还在，问 HTTPS 域名块。
+log "health nginx /traj/api（HTTPS 本机 Host）"
+curl -fsS --resolve www.sid-code.cc:443:127.0.0.1 \
+  https://www.sid-code.cc/traj/api/v1/health >/dev/null \
+  || die "https://www.sid-code.cc/traj/api/v1/health 本机反代失败"
 
 if [[ -f "$ROOT/.deploy-sha" ]]; then
   cp -a "$ROOT/.deploy-sha" "$ROOT/.deploy-sha.prev"

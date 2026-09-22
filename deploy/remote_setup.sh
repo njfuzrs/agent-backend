@@ -124,8 +124,9 @@ ufw allow 8900/tcp 2>/dev/null || true
 echo "=== 9. 最终验证 ==="
 echo "后端 API:"
 curl -sf http://127.0.0.1:8900/api/v1/health && echo ""
-echo "Nginx 反代:"
-curl -sf http://127.0.0.1/traj/api/v1/health && echo ""
+echo "Nginx 反代（HTTPS 本机 Host；:80 无 Host 是 410）:"
+curl -sf --resolve www.sid-code.cc:443:127.0.0.1 \
+  https://www.sid-code.cc/traj/api/v1/health && echo ""
 echo ""
 echo "=== 部署完成 ==="
 echo "外网访问: 见你的 nginx 反代（http://<your-host>/traj/）"
