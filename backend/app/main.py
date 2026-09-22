@@ -16,6 +16,8 @@ from sqlalchemy import text
 from app.core import db as db_mod
 from app.core.config import settings
 from app.core.router import auth
+from app.modules.flag.router import admin as flag_admin
+from app.modules.flag.router import flags as flag_serve
 from app.modules.identity.router import admin as identity_admin
 from app.modules.identity.router import enroll as identity_enroll
 from app.modules.identity.router import whoami as identity_whoami
@@ -83,13 +85,19 @@ app.include_router(stats.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
 
 # ---- 控制面：策略向客户端流入 ----
-# /ctl/** 鉴权一律 Depends(require_device)，唯一例外是签发入口 /ctl/enroll
-# （一次性注册码，鸡生蛋；由边界测试列为显式豁免，并禁止它走数据面凭据）。
+# /ctl/** 鉴权一律 Depends(require_device)，两个显式例外：
+#   /ctl/enroll     签发入口（一次性注册码，鸡生蛋）
+#   GET /ctl/flags  客户端 feature-flags.ts 发裸 fetch，没有 Authorization 头；
+#                   挂鉴权会让它 catch {} 静默吞 401，表现为「功能全在、零生效」。
+#                   代价用「只读」+「写入侧门禁禁放宽类 flag」补回来（见 flag/service/guard.py）。
+# 两者都由边界测试列为豁免，并断言它们不走数据面凭据。
 app.include_router(identity_enroll.router, prefix="/api/v1")
 app.include_router(identity_whoami.router, prefix="/api/v1")
+app.include_router(flag_serve.router, prefix="/api/v1")
 
-# ---- 管理台：身份（cookie 会话，给人看，不给客户端下发策略）----
+# ---- 管理台：身份 / flag（cookie 会话，给人看，不给客户端下发策略）----
 app.include_router(identity_admin.router, prefix="/api/v1")
+app.include_router(flag_admin.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

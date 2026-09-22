@@ -14,10 +14,10 @@ sid-code 与 claude-trace 共同面对的企业级后端：控制面（policy / 
 - 浏览 / 搜索 / 标注前端（轨迹、仪表盘、独立登录页）
 - 双平面鉴权：数据面走 `X-Upload-Token` / Basic Auth / 管理台 cookie；控制面走设备凭据 `Authorization: Bearer`，两条链互不引用
 - 设备身份：一次性注册码换凭据（`POST /api/v1/ctl/enroll`），`require_device` 查 hash、拒吊销/过期
+- Flag 下发：`GET /api/v1/ctl/flags` 扁平 JSON 全量下发（客户端契约要求无认证），管理台 CRUD + 变更审计走 cookie 会话。写入侧门禁只放行「施加约束」类开关
 
 **没有（路线图，不要当成已交付）**
 
-- Flag 下发
 - 远程 Policy
 - 组织事件接收
 - 成本账本对账
@@ -31,7 +31,7 @@ sid-code 与 claude-trace 共同面对的企业级后端：控制面（policy / 
 | --- | --- | --- |
 | 轨迹（模块一） | `backend/app/modules/trajectory/`、`frontend/src/modules/trajectory/` | 已运行 |
 | identity | `backend/app/modules/identity/`、`frontend/src/modules/identity/` | M1 已交付 |
-| flag | 规划中 | M2 |
+| flag | `backend/app/modules/flag/`、`frontend/src/modules/flag/` | M2 已交付 |
 | policy | 规划中 | M3 |
 | event | 规划中 | M4 |
 | cost | 规划中 | M5 |
@@ -59,7 +59,7 @@ cd frontend && pnpm install && pnpm dev
 
 ```bash
 cd backend && ruff check . && alembic check
-python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py -v
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py -v
 ```
 
 `tests/test_e2e.py` 等五份是对着活服务端的手动验收，不进 CI。
@@ -76,6 +76,17 @@ export TRAJ_UPLOAD_TOKEN=...
 bash scripts/backfill_sid_code.sh --dry-run
 ```
 
+## Flag 下发
+
+`GET /api/v1/ctl/flags` 返回扁平 JSON（`{"content_tracing": true, "max_turns_limit": 40}`），值是原生 JSON 类型。客户端全量替换本地缓存，所以**响应里没有某个 key = 这个 flag 已删，回落默认值** —— 停用与删除都靠这条语义生效。
+
+这个端点**无需认证**，是客户端契约决定的：sid-code 的 `feature-flags.ts` 发的是裸 `fetch`，没有 `Authorization` 头，挂上鉴权会让它拿 401 后静默吞掉，表现为「功能全在、真实会话零生效」。代价用两道锁补回来：
+
+1. 该路径只读，写口在 `/api/v1/flags/**`（管理台 cookie 会话）；
+2. 写入时门禁拒掉放宽安全限制的 key/description（`bypass`、`disable_sandbox`、`disable_all_hooks` 等）。**Flag 只能施加约束**，放宽类开关归 M3 Policy（设备凭据 + TLS）。
+
+key 必须是 `^[a-z][a-z0-9_]*$`：客户端用 `SID_CODE_FLAG_<KEY>` 做环境变量覆盖，非法标识符会让这条路径静默失效。每次变更都写审计（谁、什么时候、从什么改成什么、为什么），删除 flag 后审计记录保留。
+
 ## 部署
 
 合入 `main` 且 CI 绿后，GitHub Actions `Deploy` 会自动发到 `https://www.sid-code.cc/traj/`。紧急重放：Actions → Deploy → `workflow_dispatch`（输入 SHA）。流水线只调服务器上的 `deploy/release.sh`，不改 nginx、不 `mv /opt`、不覆盖 systemd unit。
@@ -88,7 +99,7 @@ bash scripts/backfill_sid_code.sh --dry-run
 | --- | --- | --- |
 | M0 | 工程地基（模块化、Alembic、双平面鉴权骨架） | 已合入 |
 | M1 | 设备身份 / `require_device` 从 501 变成真鉴权 | 已合入 |
-| M2 | Flag 下发 | 未开工 |
+| M2 | Flag 下发 | 已合入 |
 | M3 | 远程 Policy（硬准入：生产 TLS） | 未开工 |
 | M4 | 组织事件 | 未开工 |
 | M5 | 成本账本 | 未开工 |
