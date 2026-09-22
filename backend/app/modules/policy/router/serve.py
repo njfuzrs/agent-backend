@@ -40,18 +40,30 @@ async def get_policy(
 ):
     """命中一份 → 200 PolicySettings；三层都没有 → 204；ETag 命中 → 304。
 
+    204 带 `X-Policy-Generation: "none"`（与 200 的 ETag 不同）：负缓存友好。
+    客户端可以不读这个头，磁盘负缓存也够。不要给 204 套 settings 的 ETag，
+    否则操作者会以为停用没换代。
+
     返回类型故意是 dict / Response 而不是 Pydantic 模型：response_model 会把
     未声明字段滤掉（flag 下发踩过这个坑，实测会返回空对象）。
     """
     policy = await evaluate(db, ctx)
     if policy is None:
-        return Response(status_code=204)
+        # 与 200 的 ETag 不同：负缓存友好。客户端可以不读这个头，磁盘负缓存也够。
+        return Response(
+            status_code=204,
+            headers={
+                "Cache-Control": "private, no-cache",
+                "X-Policy-Generation": '"none"',
+            },
+        )
 
     body = delivery_body(policy)
     etag = etag_of(body)
     headers = {
         "ETag": etag,
         "Cache-Control": "private, no-cache",
+        "X-Policy-Generation": etag,
     }
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
