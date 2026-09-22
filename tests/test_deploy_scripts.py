@@ -177,6 +177,12 @@ def test_release_does_not_own_topology():
     assert "trajectory-platform" in text
     assert "sid-code-locations.conf" not in text
     assert "nginx -" not in body
+    # 2026-09-22 起本机 :80 无 Host 是 410；反代冒烟必须走 HTTPS 域名
+    assert "http://127.0.0.1/traj" not in body
+    assert "--resolve www.sid-code.cc:443:127.0.0.1" in text
+    assert "https://www.sid-code.cc/traj/api/v1/health" in text
+    setup = _command_body((DEPLOY / "remote_setup.sh").read_text(encoding="utf-8"))
+    assert "http://127.0.0.1/traj" not in setup
 
 
 def _command_body(text: str) -> str:
