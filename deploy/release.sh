@@ -9,7 +9,11 @@
 #   - 不读、不传、不改业务凭据；rsync 排除 .env
 #   - $ROOT 读 AGENT_BACKEND_ROOT（未设：/opt/agent-backend 存在则用之，否则 /opt/trajectory-platform）
 #   - systemctl 优先 agent-backend，不存在再 trajectory-platform
+#   - 成功后把 backend/app 与 frontend/dist 快照到 $ROOT/releases/<sha>/，只留最近 KEEP_RELEASES 份（PR-CD-2）
 set -euo pipefail
+
+# 保留几份代码快照。只存 app/ 与 dist/（各 ~1–2M），不存 data/、不存 .env。
+KEEP_RELEASES="${KEEP_RELEASES:-5}"
 
 log() { echo "[release $(date +%Y-%m-%dT%H:%M:%S%z)] $*"; }
 die() { log "错误: $*" >&2; exit 1; }
@@ -117,6 +121,7 @@ done
 ROOT="$(resolve_root)"
 UNIT="$(resolve_unit)"
 SELF="$(cd "$(dirname "$0")" && pwd)"
+RELEASES="$ROOT/releases"
 
 log "SHA=$SHA"
 log "SOURCE=$SOURCE"
@@ -162,6 +167,67 @@ if [[ "$NEED_MIGRATE" == "1" ]]; then
     --name "trajdb_pre_${SHA12}_${STAMP}.sql.gz"
 fi
 
+# 按 mtime 新到旧列出 releases/ 下的快照目录。
+# 不用 find -printf：那是 GNU 扩展，BSD find（开发机）不认，pipefail 下会整条失败。
+list_snapshots() {
+  local releases="$1"
+  [[ -d "$releases" ]] || return 0
+  python3 - "$releases" <<'PYEOF'
+import os
+import sys
+
+root = sys.argv[1]
+try:
+    entries = [
+        e for e in os.scandir(root)
+        if e.is_dir(follow_symlinks=False)
+    ]
+except OSError:
+    sys.exit(0)
+for e in sorted(entries, key=lambda e: e.stat().st_mtime, reverse=True):
+    print(e.path)
+PYEOF
+}
+
+# 把当时的 live 树快照成 releases/<sha>/{backend-app,dist}，并记下当时的 schema。
+# 回滚只换代码，不回 DDL —— alembic-rev 就是 rollback.sh 判断「能不能直接退」的依据。
+snapshot_tree() {
+  local sha="$1" rev="$2"
+  [[ -n "$sha" ]] || return 0
+  local dest="$RELEASES/$sha"
+  [[ -d "$ROOT/backend/app" && -d "$ROOT/frontend/dist" ]] || return 0
+  mkdir -p "$dest" || return 1
+  # --checksum：重发同一个 SHA 时 dest 已存在，而 -a 保留 mtime，
+  # 同名不同内容可能被「size+mtime 相同」判成一样而跳过。树只有 1–2M，逐字节更安全。
+  # 每步显式 || return 1：这个函数既被 if 调用（set -e 在条件里不生效），
+  # 也被直接调用，不写返回码两处行为会不一样。
+  rsync -a --checksum --delete \
+    --exclude '__pycache__' \
+    --exclude '*.pyc' \
+    "$ROOT/backend/app/" "$dest/backend-app/" || return 1
+  rsync -a --checksum --delete "$ROOT/frontend/dist/" "$dest/dist/" || return 1
+  printf '%s\n' "$rev" > "$dest/alembic-rev" || return 1
+  date -Iseconds > "$dest/taken-at" || return 1
+  log "已快照 ${dest}（schema ${rev}）"
+  return 0
+}
+
+# 按 taken-at 的新旧留最近 KEEP_RELEASES 份。只删 releases/ 下的目录，不碰 $ROOT 其它东西。
+prune_releases() {
+  [[ -d "$RELEASES" ]] || return 0
+  local keep="$KEEP_RELEASES"
+  [[ "$keep" =~ ^[0-9]+$ && "$keep" -ge 1 ]] || keep=5
+  local n=0 d
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
+    n=$((n + 1))
+    if [[ "$n" -gt "$keep" ]]; then
+      log "清理旧快照 $(basename "$d")"
+      rm -rf "$d"
+    fi
+  done < <(list_snapshots "$RELEASES")
+}
+
 rsync_app() {
   # --delete 只打白名单目录，避免扫掉 data/ 或 .env
   rsync -a --delete \
@@ -189,6 +255,17 @@ rsync_app() {
   # 仓内 unit 只当参考，rsync 进 $ROOT/deploy 无妨；禁止 copy 到 /etc。
   rsync -a "$SOURCE/deploy/" "$ROOT/deploy/"
 }
+
+# 先快照即将被覆盖的这一份：没有它，第一次回滚无处可退。
+PREV_SHA=""
+if [[ -f "$ROOT/.deploy-sha" ]]; then
+  PREV_SHA="$(tr -d ' \n\r' < "$ROOT/.deploy-sha")"
+fi
+if [[ -n "$PREV_SHA" && ! -d "$RELEASES/$PREV_SHA/backend-app" ]]; then
+  log "快照当前 live（${PREV_SHA}）"
+  snapshot_tree "$PREV_SHA" "$LIVE_REV" \
+    || log "快照 $PREV_SHA 失败（继续发版）：回滚将没有这一份"
+fi
 
 log "同步代码 → $ROOT"
 rsync_app
@@ -248,4 +325,12 @@ fi
 printf '%s\n' "$SHA" > "$ROOT/.deploy-sha"
 date -Iseconds > "$ROOT/.deploy-time"
 log "已写 $ROOT/.deploy-sha = $SHA"
+
+# 快照这一份（health 已过才做），再把历史剪到 KEEP_RELEASES。
+# 快照失败不该让一个已经健康的发版判红。
+if snapshot_tree "$SHA" "$(live_alembic_current "$ROOT/backend")"; then
+  prune_releases || log "清理旧快照失败（不影响本次发版）"
+else
+  log "快照失败（不影响本次发版）：回滚将没有 $SHA 这一份"
+fi
 log "完成"

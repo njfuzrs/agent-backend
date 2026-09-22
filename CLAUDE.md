@@ -92,7 +92,8 @@ agent-backend/
 │   ├── nginx.conf              # Nginx 配置参考
 │   ├── migrate_to_pg.py        # SQLite → PG 数据迁移
 │   ├── migrate_to_oss.sh       # 本地文件 → OSS 迁移
-│   ├── release.sh              # 生产切换唯一入口（服务器上跑；读 AGENT_BACKEND_ROOT）
+│   ├── release.sh              # 生产切换唯一入口（服务器上跑；读 AGENT_BACKEND_ROOT；成功后快照到 releases/<sha>）
+│   ├── rollback.sh             # 退到 releases/<sha> 的代码快照（只换 app/ 与 dist/，绝不 alembic downgrade）
 │   ├── push_code.sh            # 本机入口：build + rsync 暂存 + ssh release.sh
 │   ├── backup_pg.sh            # PG 备份到 OSS（cron 03:00；从 .env 读密码）
 │   ├── audit.sh                # DB vs OSS 每日对账（cron 05:00）
@@ -154,4 +155,10 @@ deploy/migrate.sh upgrade                            # 生产：自动备份后�
 #   export TRAJ_SSH_KEY=~/.ssh/xxx    # 或设置 SSHPASS（sshpass 接口变量名，不是密码本身）
 bash deploy/push_code.sh    # 本机热修：构建前端 → 暂存 → 远端 release.sh
 # 合入 main 且 CI 绿后 GitHub Actions「Deploy」自动发；紧急用 workflow_dispatch
+
+# 回滚（服务器上跑；GitHub 侧是 Deploy → workflow_dispatch 填 to_sha）
+deploy/rollback.sh --list        # 看还留着哪些快照（release.sh 保留最近 5 份）
+deploy/rollback.sh <sha>         # 退到那一份；不带参数则退到 .deploy-sha.prev
+# 只换代码不动库。schema 已前进时会拒绝 —— 正路是 forward fix，或先恢复
+# trajdb_pre_<sha>_*.sql.gz 再退。任何情况都不跑 alembic downgrade
 ```

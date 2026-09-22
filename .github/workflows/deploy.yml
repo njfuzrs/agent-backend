@@ -11,6 +11,10 @@
 #   - 不 mv /opt、不改 nginx、不覆盖 systemd unit；只 ssh 调 deploy/release.sh
 #   - StrictHostKeyChecking 必须 yes，known_hosts 来自 Environment secret
 #   - 冒烟 URL 永远是 https://www.sid-code.cc/traj/ ；IP 明文（DEPLOY_HOST :80）2026-09-22 起必须 410，禁止 301 到 https://IP
+#
+# 回滚（PR-CD-2）：workflow_dispatch 填 to_sha → 只跑 rollback job，ssh 调 deploy/rollback.sh。
+#   不 checkout、不 build、不 pip、**不 alembic downgrade**。退的是 $ROOT/releases/<sha> 里的代码快照。
+#   schema 已前进时 rollback.sh 会拒绝；破坏性迁移的回滚手段是恢复 trajdb_pre_*.sql.gz（设计 §8）。
 
 name: Deploy
 
@@ -23,6 +27,14 @@ on:
       sha:
         description: "要发布的 git SHA（空则当前 ref 的 HEAD）"
         required: false
+      to_sha:
+        description: "回滚：退到服务器 releases/<sha> 的这一份（填了就不发版、不构建）"
+        required: false
+      force:
+        description: "回滚时 schema 已前进也强行退代码（危险，默认 false）"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,6 +50,7 @@ jobs:
   deploy:
     if: >
       github.repository == 'njfuzrs/agent-backend' &&
+      !github.event.inputs.to_sha &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.head_branch == 'main' &&
@@ -291,3 +304,103 @@ jobs:
                   raise SystemExit(f"logout {resp.status}")
           print("SMOKE_BASIC ok")
           PY
+
+  # 回滚（PR-CD-2）：只在 workflow_dispatch 填了 to_sha 时跑。
+  # 不 checkout、不 build、不 pip、不 alembic downgrade —— 退的是服务器上
+  # release.sh 留下的 releases/<sha> 代码快照。schema 已前进时 rollback.sh 会拒绝。
+  rollback:
+    if: >
+      github.repository == 'njfuzrs/agent-backend' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.to_sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://www.sid-code.cc/traj/
+    env:
+      TO_SHA: ${{ github.event.inputs.to_sha }}
+      FORCE: ${{ github.event.inputs.force }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+    steps:
+      - name: 校验 Environment secret 与 to_sha
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?缺 DEPLOY_HOST}"
+          : "${DEPLOY_USER:?缺 DEPLOY_USER}"
+          : "${DEPLOY_SSH_KEY:?缺 DEPLOY_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?缺 DEPLOY_KNOWN_HOSTS}"
+          # 只接受十六进制 SHA：这串会进 ssh 命令行，不能带 ; | $( 之类
+          if [[ ! "$TO_SHA" =~ ^[0-9a-f]{7,40}$ ]]; then
+            echo "to_sha 必须是 7–40 位小写十六进制 git SHA，收到: $TO_SHA" >&2
+            exit 1
+          fi
+          echo "回滚目标 TO_SHA=$TO_SHA force=${FORCE:-false}"
+
+      - name: 写入 SSH 密钥与 known_hosts
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+          grep -q 'BEGIN OPENSSH PRIVATE KEY' "$HOME/.ssh/id_ed25519"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+
+      - name: 列出服务器上的快照
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=15)
+          "${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" 'bash "$(ls -d /opt/agent-backend 2>/dev/null || echo /opt/trajectory-platform)/deploy/rollback.sh" --list'
+
+      - name: 调用 rollback.sh
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=15)
+          ARGS="$(printf '%q' "$TO_SHA")"
+          if [[ "${FORCE:-false}" == "true" ]]; then
+            ARGS="$ARGS --force"
+          fi
+          # 用服务器上 $ROOT/deploy/rollback.sh（release.sh 每次发版都同步过去），
+          # 不从 runner 传脚本：回滚时不应该依赖 checkout。
+          "${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "bash \"\$(ls -d /opt/agent-backend 2>/dev/null || echo /opt/trajectory-platform)/deploy/rollback.sh\" $ARGS"
+
+      - name: 冒烟 HTTPS；IP 明文 410
+        run: |
+          set -euo pipefail
+          BASE="https://www.sid-code.cc/traj"
+          curl_code() {
+            local url="$1"
+            curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-body -w '%{http_code}' "$url"
+          }
+
+          code="$(curl_code "$BASE/api/v1/health")"
+          echo "HTTPS health $code"
+          test "$code" = 200
+          grep -q '"status":"ok"' /tmp/smoke-body
+
+          code="$(curl_code "$BASE/login")"
+          echo "login $code"
+          test "$code" = 200
+          grep -q 'index-' /tmp/smoke-body
+
+          code="$(curl_code "$BASE/api/v1/trajectories")"
+          echo "trajectories $code"
+          test "$code" = 401
+
+          ip_code="$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ip -w '%{http_code}' "http://${DEPLOY_HOST}/traj/api/v1/health")"
+          echo "IP health $ip_code"
+          test "$ip_code" = 410
+
+          echo "rollback smoke ok TO_SHA=$TO_SHA"
