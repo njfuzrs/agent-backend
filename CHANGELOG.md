@@ -13,6 +13,8 @@
 ### 新增
 
 - identity 模块：一次性注册码换设备凭据（`POST /api/v1/ctl/enroll`），`require_device` 查 sha256、拒吊销/过期。管理台可看设备列表与 `last_seen_at`。
+- flag 模块（M2）：`GET /api/v1/ctl/flags` 扁平 JSON 全量下发，值保持原生 JSON 类型；停用或删除 flag 后该 key 不再出现在响应里，客户端据此回落默认值。管理台 `/traj/flags` 提供 CRUD、停用/启用与变更审计（走 cookie 会话）。
+  该下发端点**无认证**是客户端契约决定的（`feature-flags.ts` 发裸 `fetch`，没有 `Authorization` 头），代价用两道锁补：路径只读，且写入侧门禁拒掉放宽安全限制的 key/description（`bypass` / `disable_sandbox` / `disable_all_hooks` 等）—— flag 只能施加约束，放宽类归 M3 Policy。key 必须匹配 `^[a-z][a-z0-9_]*$`，否则客户端 `SID_CODE_FLAG_<KEY>` 环境变量覆盖会静默失效。
 - 治理文件：`LICENSE`（MIT）、`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`、
   CI、Dependabot、pre-commit + gitleaks。
 - 根 README：产品名 **Agent Backend**（企业级 Agent 后端），写明「现在有什么 / 还没有什么」
@@ -22,6 +24,8 @@
 ### 变更
 
 - 管理台改为独立登录页：未登录或会话过期跳 `/login`，顶栏提供登出；不再用弹窗输口令。
+- 边界测试的 `/ctl/` 无认证豁免从「代码里写死 enroll 一条」改成显式白名单 `CTL_AUTH_EXEMPTIONS`（锁方法 + 路径），并新增三条测试把每个豁免的补偿措施机械化：下发端点不得有写方法、flag 写口必须挂 `require_web_session`、门禁必须拒掉放宽安全限制的 key。白名单里指向已不存在端点的条目也会红。
+- `timeutil` 从 `app/modules/identity/service/` 移到 `app/core/` —— 它是平台工具，`core/auth/control_plane.py` 早已在用，留在模块里等于 core 依赖 module。
 - 去掉轨迹对比（`/compare` 前后端）与 AI 评分/等级（scoring 路由、上传自动评分、筛选与展示）。
 - 管理台 / FastAPI / 浏览器标题从 Trajectory Platform 改为企业后端名。
 - 服务侧补传 `scripts/backfill_sid_code.sh` 的 `TRAJ_UPLOAD_URL` 改为 opt-in（无默认值）。

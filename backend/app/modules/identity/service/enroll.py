@@ -5,10 +5,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.timeutil import is_expired, iso_after, utc_now_iso
 from app.modules.identity.model import Device, DeviceCredential, EnrollCode, Organization, Team
 from app.modules.identity.schemas import EnrollRequest, EnrollResponse
 from app.modules.identity.service.secrets import hash_secret, mint_credential
-from app.modules.identity.service.timeutil import is_expired, iso_after, utc_now_iso
 
 
 async def enroll_device(db: AsyncSession, raw_token: str, payload: EnrollRequest) -> EnrollResponse:

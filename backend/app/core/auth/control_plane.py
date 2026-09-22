@@ -27,9 +27,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core import db as db_mod
 from app.core.config import settings
+from app.core.timeutil import is_expired, utc_now
 from app.modules.identity.model import Device, DeviceCredential
 from app.modules.identity.service.secrets import hash_secret
-from app.modules.identity.service.timeutil import is_expired, utc_now
 
 logger = logging.getLogger("uvicorn.error")
 

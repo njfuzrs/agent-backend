@@ -3,6 +3,7 @@ import { Layout, Menu, Typography, Button, Space, Spin } from 'antd'
 import {
   DashboardOutlined,
   DesktopOutlined,
+  FlagOutlined,
   LogoutOutlined,
   SettingOutlined,
   UnorderedListOutlined,
@@ -13,6 +14,7 @@ import Dashboard from './modules/trajectory/pages/Dashboard'
 import TrajectoryList from './modules/trajectory/pages/TrajectoryList'
 import TrajectoryDetail from './modules/trajectory/pages/TrajectoryDetail'
 import DeviceList from './modules/identity/pages/DeviceList'
+import FlagList from './modules/flag/pages/FlagList'
 import LoginPage from './pages/Login'
 import { checkAuth, logout } from './modules/trajectory/services/api'
 
@@ -48,9 +50,11 @@ function ProtectedLayout() {
     ? '/trajectories'
     : location.pathname.startsWith('/devices')
       ? '/devices'
-      : location.pathname.startsWith('/settings')
-        ? '/settings'
-        : '/'
+      : location.pathname.startsWith('/flags')
+        ? '/flags'
+        : location.pathname.startsWith('/settings')
+          ? '/settings'
+          : '/'
 
   const handleLogout = async () => {
     try {
@@ -76,6 +80,7 @@ function ProtectedLayout() {
             { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
             { key: '/trajectories', icon: <UnorderedListOutlined />, label: '轨迹' },
             { key: '/devices', icon: <DesktopOutlined />, label: '设备' },
+            { key: '/flags', icon: <FlagOutlined />, label: 'Flag' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
@@ -102,6 +107,7 @@ function App() {
         <Route path="/trajectories" element={<TrajectoryList />} />
         <Route path="/trajectories/:sessionId" element={<TrajectoryDetail />} />
         <Route path="/devices" element={<DeviceList />} />
+        <Route path="/flags" element={<FlagList />} />
         <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         <Route path="/compare" element={<Navigate to="/" replace />} />
         <Route path="/compare/:groupId" element={<Navigate to="/" replace />} />
