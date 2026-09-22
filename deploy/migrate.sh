@@ -69,7 +69,7 @@ case "$ACTION" in
     echo "==> 迁移后版本"; alembic current
     ;;
   *)
-    echo "未知操作: $ACTION（可用：current / check / stamp / plan / upgrade）" >&2
+    echo "未知操作: ${ACTION}（可用：current / check / stamp / plan / upgrade）" >&2
     exit 1
     ;;
 esac

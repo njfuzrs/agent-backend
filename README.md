@@ -93,6 +93,12 @@ key 必须是 `^[a-z][a-z0-9_]*$`：客户端用 `SID_CODE_FLAG_<KEY>` 做环境
 
 生产目录、systemd unit 文件名、nginx `/traj/` **保持原样**（切流前 `/opt/trajectory-platform`、`trajectory-platform.service`）。开源仓改名不等于服务器改名。本机热修仍可 `TRAJ_REMOTE_HOST=... bash deploy/push_code.sh`，与 CD 走同一份 `release.sh`。目标主机必须显式设置，仓库里没有公网 IP 默认值。`release.sh` 读 `AGENT_BACKEND_ROOT`。
 
+### 回滚
+
+`release.sh` 每次发版成功后，把 `backend/app/` 与 `frontend/dist/` 快照到 `$ROOT/releases/<sha>/`，保留最近 5 份（`KEEP_RELEASES` 可调）。要退版：Actions → Deploy → `workflow_dispatch`，**`to_sha` 填要退到的 SHA**（填了它就只回滚，不发版、不构建）。服务器上也可以直接 `deploy/rollback.sh --list` 看有哪些快照、`deploy/rollback.sh <sha>` 退，不带参数则退到 `.deploy-sha.prev`。
+
+回滚只换代码，**不动数据库**。快照记着当时的 alembic revision；如果之后跑过迁移，线上 schema 与快照不一致时 `rollback.sh` 会拒绝——因为退代码不退 DDL 可能让旧 ORM 读到不认识的表结构。这种情况下的正路是 forward fix（修好再发一个新 SHA），或者先用迁库前那份 `trajdb_pre_<sha>_*.sql.gz` 恢复库再回滚。`--force` 只在确认那次迁移是纯加表/加列（旧代码不碰）时才用。任何情况下都不跑 `alembic downgrade`。
+
 ## 路线图
 
 | 里程碑 | 内容 | 状态 |
@@ -100,7 +106,7 @@ key 必须是 `^[a-z][a-z0-9_]*$`：客户端用 `SID_CODE_FLAG_<KEY>` 做环境
 | M0 | 工程地基（模块化、Alembic、双平面鉴权骨架） | 已合入 |
 | M1 | 设备身份 / `require_device` 从 501 变成真鉴权 | 已合入 |
 | M2 | Flag 下发 | 已合入 |
-| M3 | 远程 Policy（硬准入：生产 TLS） | 未开工 |
+| M3 | 远程 Policy（硬准入：生产 TLS） | 已合入 |
 | M4 | 组织事件 | 未开工 |
 | M5 | 成本账本 | 未开工 |
 | M6 | 分发 / 遥控 | 按需，可后置 |
