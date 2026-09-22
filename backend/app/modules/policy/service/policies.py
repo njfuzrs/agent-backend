@@ -70,6 +70,16 @@ def etag_of(body: dict[str, Any]) -> str:
     return f'"{digest}"'
 
 
+def admin_etag_of(policy: Policy) -> str:
+    """管理台 item.etag：下发 body + disabled_at。停用 / 启用必须换 etag。
+
+    下发路径的 ETag 仍只哈希 settings（disabled 行不进 evaluate，走 204）。
+    管理台 etag 是给人看的信号，也防以后拿它当客户端缓存键踩坑。
+    """
+    body = delivery_body(policy)
+    return etag_of({**body, "disabled_at": policy.disabled_at})
+
+
 # ---------------------------------------------------------------------------
 # 下发求值（device > team > org，不合并）
 # ---------------------------------------------------------------------------
@@ -403,5 +413,5 @@ def _to_item(policy: Policy) -> PolicyItem:
         created_at=policy.created_at,
         updated_at=policy.updated_at,
         updated_by=policy.updated_by,
-        etag=etag_of(body),
+        etag=admin_etag_of(policy),
     )

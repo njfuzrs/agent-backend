@@ -172,6 +172,7 @@ def test_empty_db_is_204(client):
     resp = _get_policy(client, cred)
     assert resp.status_code == 204, resp.text
     assert not resp.content
+    assert resp.headers.get("x-policy-generation") == '"none"'
 
 
 # ---------------------------------------------------------------------------
@@ -311,15 +312,65 @@ def test_disable_unique_policy_returns_204(client):
         client, scope_type="org", scope_id="corp-shanghai", org_id="corp-shanghai", settings=DENY_CURL
     )
     policy_id = created.json()["id"]
-    assert _get_policy(client, cred).status_code == 200
+    first = _get_policy(client, cred)
+    assert first.status_code == 200
+    delivery_etag = first.headers["etag"]
 
     off = client.post(f"/api/v1/policies/{policy_id}/disable", params={"reason": "先停"})
     assert off.status_code == 200, off.text
-    assert _get_policy(client, cred).status_code == 204
+    gone = _get_policy(client, cred, etag=delivery_etag)
+    assert gone.status_code == 204, gone.text
+    assert gone.headers.get("x-policy-generation") == '"none"'
+    assert not gone.content
 
     on = client.post(f"/api/v1/policies/{policy_id}/enable", params={"reason": "再开"})
     assert on.status_code == 200, on.text
-    assert _get_policy(client, cred).status_code == 200
+    restored = _get_policy(client, cred)
+    assert restored.status_code == 200
+    assert restored.headers["etag"] == delivery_etag, "settings 没变，下发 ETag 不应因停用周期而变"
+
+
+def test_admin_disable_enable_changes_etag(client):
+    """管理台 item.etag 必须吃 disabled_at：disable / enable 各变一次。
+
+    下发 ETag 只哈希 settings，停用后走 204，不走 304。不要把两套 etag 混成一个。
+    """
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-admin-etag")
+    created = _create_policy(
+        client, scope_type="org", scope_id="corp-shanghai", org_id="corp-shanghai", settings=DENY_CURL
+    )
+    assert created.status_code == 201, created.text
+    policy_id = created.json()["id"]
+    etag_on = created.json()["etag"]
+    assert etag_on.startswith('"'), etag_on
+
+    delivered = _get_policy(client, cred)
+    assert delivered.status_code == 200
+    delivery_etag = delivered.headers["etag"]
+    assert delivered.headers.get("x-policy-generation") == delivery_etag
+
+    off = client.post(f"/api/v1/policies/{policy_id}/disable", params={"reason": "先停"})
+    assert off.status_code == 200, off.text
+    etag_off = off.json()["etag"]
+    assert off.json()["disabled"] is True
+    assert etag_off != etag_on, (etag_on, etag_off)
+
+    listed = client.get("/api/v1/policies")
+    assert listed.status_code == 200, listed.text
+    item = next(p for p in listed.json()["items"] if p["id"] == policy_id)
+    assert item["etag"] == etag_off
+
+    got = client.get(f"/api/v1/policies/{policy_id}")
+    assert got.status_code == 200, got.text
+    assert got.json()["etag"] == etag_off
+
+    on = client.post(f"/api/v1/policies/{policy_id}/enable", params={"reason": "再开"})
+    assert on.status_code == 200, on.text
+    etag_on_again = on.json()["etag"]
+    assert on.json()["disabled"] is False
+    assert etag_on_again != etag_off, (etag_off, etag_on_again)
+    assert etag_on_again == etag_on, "settings 没变、重新启用后应回到启用态 etag"
 
 
 def test_bool_is_json_literal_not_string(client):
