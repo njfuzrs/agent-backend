@@ -242,3 +242,51 @@ export function StackedAreaChart({ dates, series }: { dates: string[]; series: S
     </div>
   )
 }
+
+export function DailyBarChart({ data }: { data: Datum[] }) {
+  if (!data.length) return <EmptyChart />
+
+  const maxValue = Math.max(...data.map(item => item.value), 1)
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 168, paddingTop: 8 }}>
+      {data.map(item => (
+        <div
+          key={item.label}
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 6,
+            minWidth: 0,
+          }}
+        >
+          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{item.value}</span>
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 36,
+              height: Math.max((item.value / maxValue) * 120, item.value > 0 ? 4 : 0),
+              background: CHART_COLORS[0],
+              borderRadius: 4,
+            }}
+          />
+          <span
+            style={{
+              color: '#8c8c8c',
+              fontSize: 11,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              width: '100%',
+              textAlign: 'center',
+            }}
+          >
+            {item.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+

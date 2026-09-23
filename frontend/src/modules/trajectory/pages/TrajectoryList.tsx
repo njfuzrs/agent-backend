@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Key, ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
@@ -52,7 +52,9 @@ const EXIT_STATUS_ICON: Record<string, ReactNode> = {
 
 export default function TrajectoryList() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
+  const deviceFromUrl = searchParams.get('device_id') || undefined
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [filters, setFilters] = useState<Record<string, unknown>>({})
@@ -65,7 +67,7 @@ export default function TrajectoryList() {
   const [batchForm] = Form.useForm()
   const [sftForm] = Form.useForm()
 
-  const queryParams = { page, page_size: pageSize, sort, ...filters }
+  const queryParams = { page, page_size: pageSize, sort, ...filters, ...(deviceFromUrl ? { device_id: deviceFromUrl } : {}) }
 
   const { data, isLoading } = useQuery({
     queryKey: ['trajectories', queryParams],
@@ -264,6 +266,11 @@ export default function TrajectoryList() {
       <Typography.Title level={4} style={{ color: '#fff', margin: 0 }}>
         轨迹列表
       </Typography.Title>
+      {deviceFromUrl ? (
+        <Typography.Text style={{ color: '#8c8c8c' }}>
+          设备 <Typography.Text code>{deviceFromUrl}</Typography.Text>
+        </Typography.Text>
+      ) : null}
 
       <Card size="small">
         <Space wrap size="middle">

@@ -49,9 +49,20 @@ class EventItem(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class DailyBucket(BaseModel):
+    """按 `received_at` 日分桶。管理台柱状图用这个，不用「导出成功率」单一百分比
+    （那个数会在停机结束后自己回到 99%，丢掉的几天不留痕迹）。停机窗口由人在发版
+    记录里登记，本接口**不**自动推断（需要 health 时序，属另一个功能）。
+    """
+
+    date: str
+    count: int
+
+
 class EventListResponse(BaseModel):
     total: int
     items: list[EventItem]
+    daily: list[DailyBucket] = Field(default_factory=list)
 
 
 class SessionCoverageItem(BaseModel):

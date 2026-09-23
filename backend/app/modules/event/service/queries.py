@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.timeutil import utc_now
 from app.modules.event.model import Event, EventReject
 from app.modules.event.schemas import (
+    DailyBucket,
     EventItem,
     EventListResponse,
     EventRejectItem,
@@ -79,6 +80,29 @@ def _to_item(row: Event) -> EventItem:
     )
 
 
+def _apply_event_filters(
+    stmt,
+    *,
+    session_id: Optional[str],
+    device_id: Optional[str],
+    event_name: Optional[str],
+    org_id: Optional[str],
+    since: Optional[str],
+):
+    """列表和下钻共用同一套筛选。daily 分桶必须走同一组 where，否则柱状图和表格对不上。"""
+    if session_id:
+        stmt = stmt.where(Event.session_id == session_id)
+    if device_id:
+        stmt = stmt.where(Event.device_id == device_id)
+    if event_name:
+        stmt = stmt.where(Event.event_name == event_name)
+    if org_id:
+        stmt = stmt.where(Event.org_id == org_id)
+    if since:
+        stmt = stmt.where(Event.received_at >= since)
+    return stmt
+
+
 async def list_events(
     db: AsyncSession,
     *,
@@ -89,30 +113,37 @@ async def list_events(
     since: Optional[str] = None,
     limit: int = 100,
 ) -> EventListResponse:
-    """下钻列表。只做契约 §8 那几个维度，metadata 内部字段筛选是 BI，不做。"""
-    stmt = select(Event)
-    count_stmt = select(func.count()).select_from(Event)
-    if session_id:
-        stmt = stmt.where(Event.session_id == session_id)
-        count_stmt = count_stmt.where(Event.session_id == session_id)
-    if device_id:
-        stmt = stmt.where(Event.device_id == device_id)
-        count_stmt = count_stmt.where(Event.device_id == device_id)
-    if event_name:
-        stmt = stmt.where(Event.event_name == event_name)
-        count_stmt = count_stmt.where(Event.event_name == event_name)
-    if org_id:
-        stmt = stmt.where(Event.org_id == org_id)
-        count_stmt = count_stmt.where(Event.org_id == org_id)
-    if since:
-        stmt = stmt.where(Event.received_at >= since)
-        count_stmt = count_stmt.where(Event.received_at >= since)
+    """下钻列表。只做契约 §8 那几个维度，metadata 内部字段筛选是 BI，不做。
+
+    `daily` 按 `received_at` 的日期前缀分桶（ISO 字典序 = 时序，取前 10 位即 YYYY-MM-DD）。
+    这是管理台柱状图的数据源。停机窗口**不**在这里标灰 —— 自动推断需要 health 时序，
+    本里程碑由人在页面上对照发版记录看。
+    """
+    filters = dict(
+        session_id=session_id,
+        device_id=device_id,
+        event_name=event_name,
+        org_id=org_id,
+        since=since,
+    )
+    stmt = _apply_event_filters(select(Event), **filters)
+    count_stmt = _apply_event_filters(select(func.count()).select_from(Event), **filters)
 
     total = int((await db.execute(count_stmt)).scalar_one() or 0)
     rows = (
         await db.execute(stmt.order_by(Event.received_at.desc(), Event.id.desc()).limit(limit))
     ).scalars().all()
-    return EventListResponse(total=total, items=[_to_item(r) for r in rows])
+
+    # ISO 前 10 位是 YYYY-MM-DD。PG / SQLite 的 substr 都是 1-based。
+    day_expr = func.substr(Event.received_at, 1, 10)
+    daily_stmt = _apply_event_filters(
+        select(day_expr.label("date"), func.count().label("count")).group_by(day_expr),
+        **filters,
+    ).order_by(day_expr.asc())
+    daily_rows = (await db.execute(daily_stmt)).all()
+    daily = [DailyBucket(date=row.date, count=int(row.count)) for row in daily_rows if row.date]
+
+    return EventListResponse(total=total, items=[_to_item(r) for r in rows], daily=daily)
 
 
 async def list_rejects(db: AsyncSession) -> EventRejectListResponse:

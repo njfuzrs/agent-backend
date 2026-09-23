@@ -21,6 +21,7 @@ def build_trajectory_filters(
     search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    device_id: Optional[str] = None,
 ) -> list:
     filters = [Trajectory.deleted_at.is_(None)]
 
@@ -42,6 +43,10 @@ def build_trajectory_filters(
         filters.append(Trajectory.start_time >= start_date)
     if end_date:
         filters.append(Trajectory.start_time <= end_date)
+    if device_id:
+        # M4 设备列表「轨迹」跳转：/?device_id= 实际落到 /trajectories?device_id=
+        # 列已有 idx_traj_device_id，只加参数不改响应形状。
+        filters.append(Trajectory.device_id == device_id)
 
     return filters
 

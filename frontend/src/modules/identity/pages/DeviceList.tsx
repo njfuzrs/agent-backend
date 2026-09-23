@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
@@ -29,6 +30,9 @@ function formatTs(value: string | null | undefined) {
 
 export default function DeviceList() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const deviceFromUrl = searchParams.get('device_id') || undefined
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [createOpen, setCreateOpen] = useState(false)
@@ -36,8 +40,8 @@ export default function DeviceList() {
   const [form] = Form.useForm()
 
   const { data, isLoading } = useQuery({
-    queryKey: ['identity-devices', page, pageSize],
-    queryFn: () => fetchDevices({ page, page_size: pageSize }),
+    queryKey: ['identity-devices', page, pageSize, deviceFromUrl],
+    queryFn: () => fetchDevices({ page, page_size: pageSize, device_id: deviceFromUrl }),
   })
 
   const { data: codes, isLoading: codesLoading } = useQuery({
@@ -114,17 +118,33 @@ export default function DeviceList() {
     {
       title: '操作',
       key: 'action',
-      width: 90,
+      width: 220,
       render: (_value, record) => (
-        <Popconfirm
-          title="吊销后该设备立即无法访问控制面，确认？"
-          onConfirm={() => revokeMutation.mutate(record.device_id)}
-          disabled={record.revoked}
-        >
-          <Button type="link" danger disabled={record.revoked} loading={revokeMutation.isPending}>
-            吊销
+        <Space size="small">
+          <Button
+            type="link"
+            style={{ padding: 0 }}
+            onClick={() => navigate(`/trajectories?device_id=${encodeURIComponent(record.device_id)}`)}
+          >
+            轨迹
           </Button>
-        </Popconfirm>
+          <Button
+            type="link"
+            style={{ padding: 0 }}
+            onClick={() => navigate(`/audit?device_id=${encodeURIComponent(record.device_id)}`)}
+          >
+            审计
+          </Button>
+          <Popconfirm
+            title="吊销后该设备立即无法访问控制面，确认？"
+            onConfirm={() => revokeMutation.mutate(record.device_id)}
+            disabled={record.revoked}
+          >
+            <Button type="link" danger disabled={record.revoked} loading={revokeMutation.isPending}>
+              吊销
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ]

@@ -221,3 +221,19 @@ def test_admin_device_list_shows_last_seen(client):
     match = next(i for i in items if i["device_id"] == "dev-seen")
     assert match["last_seen_at"]
     assert match["org_id"] == "corp-shanghai"
+
+
+def test_admin_device_list_filters_by_device_id(client):
+    """审计页点 device_id 跳 /devices?device_id= 时，列表必须能精确筛到这一台。"""
+    tc, _ = client
+    code = _issue_code(tc)
+    _enroll(tc, code, device_id="dev-keep")
+    code_b = _issue_code(tc)
+    _enroll(tc, code_b, device_id="dev-other")
+
+    listed = tc.get("/api/v1/identity/devices", params={"device_id": "dev-keep"})
+    assert listed.status_code == 200, listed.text
+    items = listed.json()["items"]
+    assert listed.json()["total"] == 1
+    assert [i["device_id"] for i in items] == ["dev-keep"]
+
