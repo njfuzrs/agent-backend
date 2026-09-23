@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # 导入所有模块的 model，使 Base.metadata 完整
 # 新增模块时必须在这里补一行 import，否则 autogenerate 会把它的表当成「待删除」
+import app.modules.event.model  # noqa: F401
 import app.modules.flag.model  # noqa: F401
 import app.modules.identity.model  # noqa: F401
 import app.modules.policy.model  # noqa: F401

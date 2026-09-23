@@ -49,11 +49,12 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install -r backend/requirements.txt pytest
-      - run: python -m pytest tests/test_boundaries.py tests/test_identity.py tests/test_flag.py tests/test_policy.py tests/test_deploy_scripts.py -v
-        # test_boundaries 覆盖六条纪律（含 /ctl/flags 无认证豁免的两道补偿锁）
+      - run: python -m pytest tests/test_boundaries.py tests/test_identity.py tests/test_flag.py tests/test_policy.py tests/test_event.py tests/test_deploy_scripts.py -v
+        # test_boundaries 覆盖六条纪律（含 /ctl/flags 无认证豁免的两道补偿锁）+ events 三条门禁
         # test_identity 覆盖 enroll / 吊销 / 明文不入库
         # test_flag 覆盖下发契约（扁平 + 原生类型 + 能感知删除）/ key 门禁 / 审计
         # test_policy 覆盖 /ctl/policy Bearer + device>team>org + reason 必填
+        # test_event 覆盖 POST /events 401 / 幂等 / 白名单 / 两个固定聚合
         # test_deploy_scripts 覆盖 backup_pg / release 契约（不连生产）
 
   frontend:

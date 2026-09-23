@@ -243,6 +243,15 @@ jobs:
           echo "policy $code"
           test "$code" = 401
 
+          # 无凭据必须 401：端点存在、挂了鉴权、不是 404（忘注册）、不是 202（误做成无认证）。
+          # 空 events 数组：即使鉴权万一漏了，这个请求也不会往生产库塞脏数据。
+          # GET curl_code 不够 —— 本端点是 POST，省略 body 时 FastAPI 可能先 422。
+          code=$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ev -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' -d '{"events":[]}' \
+            "$BASE/api/v1/events")
+          echo "events(no auth) -> $code"
+          test "$code" = 401
+
           # 2026-09-22 起 IP :80 明文内容通道关（410）。
           # 不跟随 3xx：禁止 301 到 https://IP（证书不含 IP，那是 2026-08-05 的死锁）。
           ip_code="$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ip -w '%{http_code}' "http://${DEPLOY_HOST}/traj/api/v1/health")"
