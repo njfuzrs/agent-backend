@@ -137,8 +137,7 @@ def get_storage() -> StorageBackend:
     # 是相对 data/ 的路径，所以取 TRAJ_FILES_DIR 的 parent（= data/）当 base。
     #
     # 注意 TRAJ_FILES_DIR 在 STORAGE_BACKEND=oss 下是死键（这行在 is_oss 之后，
-    # 走不到）。生产 .env 里那条残留值指向不存在的目录也不影响运行，
-    # 但别据此以为它还在承重 —— 见 .env.example 存储段的说明。
+    # 走不到）。切 oss 时不要在 .env 里留这个键 —— 见 .env.example 存储段。
     return LocalStorage(settings.TRAJ_FILES_DIR)
 
 

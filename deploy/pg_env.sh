@@ -120,6 +120,20 @@ psql_q() {
 # 带命名参数的查询/写入：值通过 psql 变量传入，用 :'name' 引用。
 # psql 会正确加引号转义，避免把 session_id 之类的外部输入拼进 SQL。
 #   psql_v "delete from t where id = :'sid'" sid "$s"
+#
+# ⚠️ SQL 必须走 stdin，不能用 -c：psql 只对**脚本输入**做变量插值，
+#    `-c` 的字符串是整体发给服务端的单条命令，:'name' 会原样到达 PG 并报
+#    `syntax error at or near ":"`。生产 psql 14.24 实测：
+#      psql -v sid=abc -c "select :'sid';"      → ERROR: syntax error at or near ":"
+#      printf "select :'sid';" | psql -v sid=abc → abc
+#    本地用 stub psql 测不出来（stub 只回显，不解析），必须在真 PG 上验。
+#
+# ⚠️ ON_ERROR_STOP=1 不可省：脚本模式（stdin）下 psql 遇 SQL 错误默认仍返回 0，
+#    而 cleanup_deleted.sh 用 `if ! psql_v ...` 判断成败 —— 少了它，删除失败会
+#    被当成成功，DB 行被认为已清理。生产 psql 14.24 实测：
+#      printf 'select * from no_such_table;' | psql                    → exit 0
+#      printf 'select * from no_such_table;' | psql -v ON_ERROR_STOP=1 → exit 3
+#    （-c 模式遇错本来就返回非 0，所以原写法没暴露这一点。）
 psql_v() {
   local sql="$1"; shift
   local -a args=()
@@ -127,5 +141,7 @@ psql_v() {
     args+=(-v "$1=$2")
     shift 2
   done
-  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tA "${args[@]}" -c "$sql"
+  printf '%s\n' "$sql" \
+    | psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+        -tA -v ON_ERROR_STOP=1 "${args[@]}"
 }
