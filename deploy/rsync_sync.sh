@@ -1,6 +1,21 @@
-#!/bin/bash
-# deploy/rsync_sync.sh — 批量同步 .traj 文件到云端
+#!/usr/bin/env bash
+# deploy/rsync_sync.sh — ⚠️ 已废弃（本地存储时代的批量补传：rsync + reindex）
+#
+# 现行补传：claude-trace 侧的 uploader（自动）与 sync.py（批量），走 HTTP
+# POST /api/v1/upload/traj，见 claude-trace/docs/upload-protocol.md。
+# 本脚本在 STORAGE_BACKEND=oss 下是**静默空转**，比报错更坏：
+#   - rsync 到 data/traj_files/claude-code/ —— OSS 模式下没有任何代码读这个目录；
+#   - 随后调的 POST /upload/reindex 在 is_oss 时直接返回「不需要 reindex」，
+#     一条都不会入库。于是文件躺在服务器磁盘上，管理台却永远看不到，
+#     而脚本最后照样打印「完成」。
+# 保留文件仅为历史参考；要删请单独开 PR，不要在别的改动里顺手删。
+set -euo pipefail
 
+echo "rsync_sync.sh 已废弃：批量补传请用 claude-trace 的 sync.py（HTTP 上传协议）" >&2
+echo "（本脚本 rsync 到 data/traj_files/ 并调 reindex，OSS 模式下两步都是空转）" >&2
+exit 1
+
+# ---- 以下为历史实现，不再执行 ----
 REMOTE_USER="${TRAJ_REMOTE_USER:-root}"
 # TRAJ_SSH_KEY 是密钥文件，不能代替 host。未设目标主机则退出，避免把生产公网 IP 写进默认值。
 if [[ -z "${TRAJ_REMOTE_HOST:-}" ]]; then

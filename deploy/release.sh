@@ -274,12 +274,17 @@ log "清理 __pycache__"
 find "$ROOT/backend" -type d -name '__pycache__' -prune -exec rm -rf {} +
 
 log "chmod +x deploy 脚本"
+# pg_env.sh 是被 source 的公共库，不需要 +x，但也不能漏掉它的存在性检查：
+# audit.sh / cleanup_deleted.sh / backup_pg.sh 少了它会在第一行 source 就失败。
 for s in release backup_pg audit cleanup_deleted migrate push_code rollback; do
   f="$ROOT/deploy/${s}.sh"
   if [[ -f "$f" ]]; then
     chmod +x "$f"
   fi
 done
+if [[ ! -f "$ROOT/deploy/pg_env.sh" ]]; then
+  log "警告: 缺 $ROOT/deploy/pg_env.sh，audit/cleanup/backup_pg 将无法运行"
+fi
 
 log "pip3 install -r requirements.txt"
 pip3 install -q -r "$ROOT/backend/requirements.txt"

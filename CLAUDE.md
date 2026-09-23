@@ -87,18 +87,22 @@ agent-backend/
 │   └── vite.config.ts      # base: '/traj/'（冻结区，不要改）
 ├── data/                   # 数据目录（.gitignore）
 ├── deploy/                 # 部署配置与运维脚本
-│   ├── remote_setup.sh         # 一键部署脚本
+│   ├── remote_setup.sh         # 一键部署脚本（首次装机入口）
 │   ├── trajectory-platform.service  # systemd unit（文件名故意不改）
 │   ├── nginx.conf              # Nginx 配置参考
+│   ├── pg_env.sh               # 被 source 的公共库：resolve_root / load_pg_from_env / psql_q
 │   ├── migrate_to_pg.py        # SQLite → PG 数据迁移
-│   ├── migrate_to_oss.sh       # 本地文件 → OSS 迁移
+│   ├── migrate_to_oss.sh       # 本地文件 → OSS 迁移（一次性，2026-03 已执行完）
 │   ├── release.sh              # 生产切换唯一入口（服务器上跑；读 AGENT_BACKEND_ROOT；成功后快照到 releases/<sha>）
 │   ├── rollback.sh             # 退到 releases/<sha> 的代码快照（只换 app/ 与 dist/，绝不 alembic downgrade）
 │   ├── push_code.sh            # 本机入口：build + rsync 暂存 + ssh release.sh
 │   ├── backup_pg.sh            # PG 备份到 OSS（cron 03:00；从 .env 读密码）
 │   ├── audit.sh                # DB vs OSS 每日对账（cron 05:00）
 │   ├── cleanup_deleted.sh      # 软删除 30 天后真删（cron 06:00）
-│   └── migrate.sh              # 生产库 schema 演进入口（current/check/stamp/plan/upgrade）
+│   ├── migrate.sh              # 生产库 schema 演进入口（current/check/stamp/plan/upgrade）
+│   ├── backup.sh               # ⚠️ 已废弃（SQLite 时代），执行即 exit 1 → 用 backup_pg.sh
+│   ├── setup.sh                # ⚠️ 已废弃（会建 traj_files/、给 backup.sh 装 cron）→ 用 remote_setup.sh
+│   └── rsync_sync.sh           # ⚠️ 已废弃（OSS 下 rsync+reindex 双空转）→ 用 claude-trace sync.py
 ├── scripts/                # 服务侧运维脚本（现仅 backfill_sid_code.sh）
 └── tests/                  # test_boundaries.py 为门禁核心；其余 5 个脚本为手动验收工具
 ```
@@ -107,6 +111,8 @@ agent-backend/
 
 - **存储后端抽象**：`modules/trajectory/service/storage.py` 定义了 `StorageBackend` 协议，`LocalStorage`（本地文件）和 `OSSStorage`（对象存储 + LRU 缓存）两个实现，通过 `STORAGE_BACKEND` 环境变量切换
 - **数据库兼容**：`core/db.py` 根据 `DATABASE_URL` 前缀自动选择驱动，SQLite 模式自动执行 WAL pragma
+- **运维脚本的 PG 凭据只有一条路**：`deploy/pg_env.sh` 的 `load_pg_from_env` 从 `$ROOT/.env` 的 `DATABASE_URL` 解析并走 TCP。不要在脚本里写 `psql -U trajuser`——不带密码会走 unix socket 撞 pg_hba 的 `local all all peer`，每天 cron 必然 FATAL（audit 曾因此报出 `差异: -9574` 假警报，cleanup 则从未成功清理过一条）。由 `tests/test_deploy_scripts.py` 的 `test_pg_scripts_never_use_peer_auth` 拦截
+- **shell 里变量紧跟中文标点必须写 `${name}`**：`$var（` 在 UTF-8 locale 下 bash 会把全角字符首字节并进变量名，`set -u` 下直接 `unbound variable`；`LANG=C` 侥幸能跑，所以本地测不出来。由 `test_no_var_glued_to_fullwidth_char` 全仓扫描
 - **schema 演进只有一条路**：`alembic upgrade head`。原 `init_db()` 的 `create_all` + `_migrate_sqlite_columns()` 已删除 —— 前者不改已有表的列，后者被 `is_sqlite` 挡住（生产是 PG，等于生产无加列路径）。运行时代码不得建表，由边界测试拦截
 - **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`（签发入口 `/ctl/enroll` 除外走一次性注册码；`GET /ctl/flags` 是客户端裸 fetch 的有意豁免）。`GET /ctl/policy` **必须**挂 `require_device`，不要加进豁免名单。由边界测试反射检查
 - **管理台凭据不落 localStorage**：独立登录页走 `/api/v1/auth/login` 下发 HttpOnly + SameSite cookie（无状态 HMAC 签名，跨 worker 有效）。未登录或 401 跳 `/login`。Basic Auth 保留给脚本与 curl
