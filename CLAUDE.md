@@ -88,6 +88,7 @@ agent-backend/
 │   │   ├── modules/identity/     # 设备列表 / 一次性注册码
 │   │   ├── modules/flag/         # Feature Flag 列表
 │   │   ├── modules/policy/       # 策略列表（device/team/org）
+│   │   ├── modules/event/        # 审计视图（/audit，与轨迹 join）
 │   │   └── utils/          # 跨模块工具（format / chart / trajectoryDetail）
 │   └── vite.config.ts      # base: '/traj/'（冻结区，不要改）
 ├── data/                   # 数据目录（.gitignore）

@@ -6,6 +6,7 @@ import {
   FlagOutlined,
   LogoutOutlined,
   SafetyCertificateOutlined,
+  AuditOutlined,
   SettingOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons'
@@ -17,6 +18,7 @@ import TrajectoryDetail from './modules/trajectory/pages/TrajectoryDetail'
 import DeviceList from './modules/identity/pages/DeviceList'
 import FlagList from './modules/flag/pages/FlagList'
 import PolicyList from './modules/policy/pages/PolicyList'
+import AuditOverview from './modules/event/pages/AuditOverview'
 import LoginPage from './pages/Login'
 import { checkAuth, logout } from './modules/trajectory/services/api'
 
@@ -56,9 +58,11 @@ function ProtectedLayout() {
         ? '/flags'
         : location.pathname.startsWith('/policies')
           ? '/policies'
-          : location.pathname.startsWith('/settings')
-            ? '/settings'
-            : '/'
+          : location.pathname.startsWith('/audit')
+            ? '/audit'
+            : location.pathname.startsWith('/settings')
+              ? '/settings'
+              : '/'
 
   const handleLogout = async () => {
     try {
@@ -86,6 +90,7 @@ function ProtectedLayout() {
             { key: '/devices', icon: <DesktopOutlined />, label: '设备' },
             { key: '/flags', icon: <FlagOutlined />, label: 'Flag' },
             { key: '/policies', icon: <SafetyCertificateOutlined />, label: '策略' },
+            { key: '/audit', icon: <AuditOutlined />, label: '审计' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
@@ -114,6 +119,7 @@ function App() {
         <Route path="/devices" element={<DeviceList />} />
         <Route path="/flags" element={<FlagList />} />
         <Route path="/policies" element={<PolicyList />} />
+        <Route path="/audit" element={<AuditOverview />} />
         <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         <Route path="/compare" element={<Navigate to="/" replace />} />
         <Route path="/compare/:groupId" element={<Navigate to="/" replace />} />

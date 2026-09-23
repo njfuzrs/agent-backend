@@ -173,14 +173,19 @@ async def list_devices(
     page: int,
     page_size: int,
     org_id: str | None = None,
+    device_id: str | None = None,
 ) -> DeviceListResponse:
     filters = []
     if org_id:
         filters.append(Organization.org_id == org_id)
+    if device_id:
+        filters.append(Device.device_id == device_id)
 
     count_stmt = select(func.count(Device.id))
     if org_id:
-        count_stmt = count_stmt.join(Organization).where(*filters)
+        count_stmt = count_stmt.join(Organization)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
     total = (await db.execute(count_stmt)).scalar_one()
 
     stmt = (
@@ -193,7 +198,9 @@ async def list_devices(
         .order_by(Device.last_seen_at.desc().nullslast(), Device.created_at.desc())
     )
     if org_id:
-        stmt = stmt.join(Organization).where(*filters)
+        stmt = stmt.join(Organization)
+    if filters:
+        stmt = stmt.where(*filters)
 
     result = await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
     items = [_to_list_item(d) for d in result.scalars().unique().all()]

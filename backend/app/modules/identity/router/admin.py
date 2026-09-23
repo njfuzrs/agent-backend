@@ -62,9 +62,12 @@ async def list_devices(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     org_id: Optional[str] = None,
+    device_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    return await admin_service.list_devices(db, page=page, page_size=page_size, org_id=org_id)
+    return await admin_service.list_devices(
+        db, page=page, page_size=page_size, org_id=org_id, device_id=device_id
+    )
 
 
 @router.post("/devices/{device_id}/revoke", response_model=RevokeResponse)

@@ -55,6 +55,7 @@ async def list_trajectories(
     search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    device_id: Optional[str] = None,
     min_steps: Optional[int] = None,
     max_steps: Optional[int] = None,
     sort: str = "-start_time",
@@ -74,6 +75,7 @@ async def list_trajectories(
         search=search,
         start_date=start_date,
         end_date=end_date,
+        device_id=device_id,
     )
     if min_steps is not None:
         filters.append(Trajectory.total_steps >= min_steps)

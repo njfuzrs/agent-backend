@@ -386,8 +386,18 @@ def _insert_trajectory(session_id: str, device_id: str = "dev-traj") -> None:
             """
             INSERT INTO trajectories (
                 session_id, tool_source, model, traj_file_path,
-                uploaded_at, updated_at, device_id
-            ) VALUES (?, 'claude-code', 'test', '/tmp/x.traj', ?, ?, ?)
+                uploaded_at, updated_at, device_id,
+                total_steps, total_api_calls, total_tokens, total_cost_usd,
+                exit_status, first_prompt, quality_status, traj_file_size,
+                has_thinking, has_sub_agent, task_type, project_name,
+                tools_used, tags
+            ) VALUES (
+                ?, 'claude-code', 'test', '/tmp/x.traj', ?, ?, ?,
+                0, 0, 0, 0.0,
+                '', '', 'unreviewed', 0,
+                0, 0, '', '',
+                '[]', '[]'
+            )
             """,
             (session_id, "2026-09-23T00:00:00+00:00", "2026-09-23T00:00:00+00:00", device_id),
         )
@@ -482,3 +492,35 @@ def test_policy_audit_splits_false_positives(client):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+def test_list_events_daily_buckets_and_since(client):
+    """管理台柱状图走 GET /events 的 daily 字段，按 received_at 日分桶。"""
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-daily")
+    events = [
+        _event("tool_call", 1_780_557_354_780),
+        _event("tool_success", 1_780_557_354_781),
+    ]
+    assert _post(client, cred, events).json()["accepted"] == 2
+    _login(client)
+    body = client.get("/api/v1/events").json()
+    assert body["total"] == 2
+    assert body["daily"]
+    assert sum(b["count"] for b in body["daily"]) == 2
+    assert all(len(b["date"]) == 10 for b in body["daily"])
+
+    future = client.get("/api/v1/events", params={"since": "2099-01-01T00:00:00+00:00"}).json()
+    assert future["total"] == 0
+    assert future["daily"] == []
+
+
+def test_list_trajectories_filters_by_device_id(client):
+    """设备列表「轨迹」跳转依赖这个参数。不改响应形状，只加筛选。"""
+    _insert_trajectory("20260922-200236-dddddddd", device_id="dev-keep")
+    _insert_trajectory("20260922-200236-eeeeeeee", device_id="dev-other")
+    _login(client)
+    body = client.get("/api/v1/trajectories", params={"device_id": "dev-keep"}).json()
+    ids = {row["session_id"] for row in body["items"]}
+    assert "20260922-200236-dddddddd" in ids
+    assert "20260922-200236-eeeeeeee" not in ids
+
