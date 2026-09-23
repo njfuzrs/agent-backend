@@ -659,6 +659,8 @@ def test_deploy_yml_contract():
     assert "/traj/api/v1/health" in text
     assert "$BASE/login" in text
     assert "/api/v1/ctl/policy" in text
+    assert "/api/v1/events" in text
+    assert '{"events":[]}' in text
     assert "121.196.144.227" not in text
     # 2026-09-22 起 IP 明文必须 410，不能再当 200 救生通道
     assert 'test "$ip_code" = 410' in text

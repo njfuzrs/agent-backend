@@ -16,6 +16,7 @@
     ⑤ enroll 不得走数据面凭据
     ⑥ 无认证豁免名单是白名单，且每个豁免项的代价可机械检查
     ⑦ /ctl/policy 挂 require_device、只读；/api/v1/policies 挂 cookie 会话
+    ⑧ POST /events 挂 require_device（不在 /ctl/ 下，② 扫不到）；GET 挂 cookie；只追加
 """
 
 import ast
@@ -35,7 +36,7 @@ APP_DIR = BACKEND_DIR / "app"
 DATA_PLANE_AUTH_SYMBOLS = {"verify_upload_token", "verify_basic_auth"}
 
 # 控制面模块（规划 §2.1）。M1-M5 逐个补齐，目录不存在时跳过。
-CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "cost"]
+CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "event", "cost"]
 
 
 def _iter_py_files(root: Path):
@@ -69,7 +70,7 @@ def _imported_names(path: Path) -> set[str]:
 # ① 控制面禁止复用数据面鉴权
 # ---------------------------------------------------------------------------
 def test_control_plane_never_imports_data_plane_auth():
-    """扫 app/modules/{identity,flag,policy,cost}/ 与 core/auth/control_plane.py，
+    """扫 app/modules/{identity,flag,policy,event,cost}/ 与 core/auth/control_plane.py，
     出现 verify_upload_token / verify_basic_auth 即失败。
 
     理由见规划 §2.1：控制面被打穿 = 全公司客户端护栏被关。
@@ -523,6 +524,84 @@ def test_policy_admin_writes_require_web_session():
     assert checked > 0, "没找到 /api/v1/policies 管理端点 —— policy 模块是否没注册？"
     assert not offenders, (
         "以下 policy 管理端点没挂 require_web_session:\n  " + "\n  ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# ⑧ events：数据面方向、控制面鉴权。不在 /ctl/ 下，② 扫不到。
+# ---------------------------------------------------------------------------
+def test_events_ingest_requires_device():
+    """POST /api/v1/events 必须挂 require_device。
+
+    这条不能靠 test_all_control_endpoints_require_device —— 那条按路径含
+    /ctl/ 筛，而本端点刻意不在 /ctl/ 下（数据流向是数据面，鉴权用控制面）。
+    漏挂鉴权 = 任何人可往审计表灌数据，且没有任何现有门禁会红。
+    假门禁对策：注释掉 ingest.py 的 Depends(require_device) 必须红，已红过。
+    """
+    from app.core.auth.control_plane import require_device
+    from app.main import app
+
+    found = False
+    for path, methods, dependant in _iter_app_routes(app):
+        if (path.rstrip("/") or path) != "/api/v1/events":
+            continue
+        if "POST" not in methods:
+            continue
+        found = True
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        assert any(getattr(d, "call", None) is require_device for d in deps), (
+            "POST /api/v1/events 没挂 require_device。"
+            "现有门禁 ② 按 /ctl/ 筛，扫不到本端点，漏挂等于无认证写入审计表。"
+        )
+    assert found, "POST /api/v1/events 端点不存在 —— event 模块是否没注册？"
+
+
+def test_events_read_requires_web_session():
+    """GET /api/v1/events 与 /events/stats/** 必须挂 require_web_session。
+
+    对标 test_policy_admin_writes_require_web_session。
+    假门禁对策：注释掉 admin.py 的 require_web_session 必须红，已红过。
+    """
+    from app.core.auth.session import require_web_session
+    from app.main import app
+
+    checked = 0
+    offenders = []
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/events"):
+            continue
+        if "GET" not in methods:
+            continue
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        if not any(getattr(d, "call", None) is require_web_session for d in deps):
+            offenders.append(f"{','.join(sorted(methods))} {path}")
+        checked += 1
+
+    assert checked > 0, "没找到 GET /api/v1/events 管理端点 —— event 模块是否没注册？"
+    assert not offenders, (
+        "以下 events 读端点没挂 require_web_session:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_events_has_no_write_endpoints_besides_ingest():
+    """events 表只追加。除 POST /events 外不得有 PUT/PATCH/DELETE 端点。
+
+    防的是「顺手加个删除脏数据的接口」——审计表能删就不是审计表。
+    假门禁对策：临时加 @router.delete("/events/{id}") 必须红，已红过。
+    """
+    from app.main import app
+
+    offenders = []
+    for path, methods, _dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/events"):
+            continue
+        writes = {m for m in methods if m in {"PUT", "PATCH", "DELETE"}}
+        if writes:
+            offenders.append(f"{','.join(sorted(writes))} {path}")
+        if "POST" in methods and (path.rstrip("/") or path) != "/api/v1/events":
+            offenders.append(f"POST {path}")
+    assert not offenders, (
+        "events 只追加，以下写端点不该存在:\n  " + "\n  ".join(offenders)
     )
 
 
