@@ -68,7 +68,7 @@ fi
 # 健康检查：服务端不可达就别浪费时间逐个超时
 health=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$UPLOAD_URL/api/v1/health" || echo 000)
 if [[ "$health" != "200" ]]; then
-  echo "错误：服务端不可达（$UPLOAD_URL/api/v1/health → HTTP $health）" >&2
+  echo "错误：服务端不可达（$UPLOAD_URL/api/v1/health → HTTP ${health}）" >&2
   exit 1
 fi
 

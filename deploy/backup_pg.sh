@@ -10,6 +10,10 @@
 #
 # 密码只从 $ROOT/.env 的 DATABASE_URL 解析（没有再读 backend/.env）。
 # 无密码、sqlite、或 oss 上传失败 → 非 0。不 echo 密码，不 set -x。
+#
+# 2026-09-23：resolve_root / load_pg_from_env 原本是本文件私有的，audit.sh 与
+# cleanup_deleted.sh 却各自写死 `PG_USER=trajuser` 且不带密码（撞 peer auth 每天必失败）。
+# 两个函数已抽到 deploy/pg_env.sh，三份脚本共用一份解析，避免再次分叉。
 set -euo pipefail
 # dump 含全库，权限收紧
 umask 077
@@ -18,81 +22,9 @@ log() { echo "[backup_pg $(date +%Y-%m-%dT%H:%M:%S%z)] $*"; }
 
 die() { log "错误: $*" >&2; exit 1; }
 
-# 与 release.sh 同一套根目录规则。未设 AGENT_BACKEND_ROOT 时：
-# /opt/agent-backend 存在就用它，否则 /opt/trajectory-platform。
-resolve_root() {
-  if [[ -n "${AGENT_BACKEND_ROOT:-}" ]]; then
-    printf '%s\n' "$AGENT_BACKEND_ROOT"
-    return
-  fi
-  if [[ -n "${TRAJ_REMOTE_BASE_DIR:-}" ]]; then
-    printf '%s\n' "$TRAJ_REMOTE_BASE_DIR"
-    return
-  fi
-  if [[ -d /opt/agent-backend ]]; then
-    printf '%s\n' /opt/agent-backend
-  else
-    printf '%s\n' /opt/trajectory-platform
-  fi
-}
-
-load_pg_from_env() {
-  local envfile="$1"
-  [[ -f "$envfile" ]] || die "找不到 $envfile"
-  local parsed
-  parsed="$(python3 - "$envfile" <<'PY'
-import shlex
-import sys
-from urllib.parse import unquote, urlparse
-
-path = sys.argv[1]
-url = None
-with open(path, encoding="utf-8") as f:
-    for raw in f:
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        if k.strip() != "DATABASE_URL":
-            continue
-        url = v.strip().strip("'").strip('"')
-        break
-if not url:
-    print("解析失败: 没有 DATABASE_URL", file=sys.stderr)
-    sys.exit(2)
-if url.startswith("sqlite"):
-    print("解析失败: DATABASE_URL 是 sqlite，backup_pg.sh 只支持 PostgreSQL", file=sys.stderr)
-    sys.exit(2)
-for prefix in ("postgresql+asyncpg://", "postgresql+psycopg2://", "postgres+asyncpg://"):
-    if url.startswith(prefix):
-        url = "postgresql://" + url[len(prefix):]
-        break
-parsed = urlparse(url)
-if parsed.scheme not in ("postgresql", "postgres"):
-    print(f"解析失败: 不支持的协议 {parsed.scheme!r}", file=sys.stderr)
-    sys.exit(2)
-user = unquote(parsed.username or "")
-password = unquote(parsed.password or "")
-host = parsed.hostname or "localhost"
-port = parsed.port or 5432
-db = (parsed.path or "").lstrip("/") or "trajdb"
-if not user:
-    print("解析失败: DATABASE_URL 没有用户名", file=sys.stderr)
-    sys.exit(2)
-if not password:
-    print("解析失败: DATABASE_URL 没有密码", file=sys.stderr)
-    sys.exit(2)
-# 逐行 export，shlex.quote 保证密码里的 $ ` " 不会被二次展开
-print(f"export PGUSER={shlex.quote(user)}")
-print(f"export PGPASSWORD={shlex.quote(password)}")
-print(f"export PGHOST={shlex.quote(host)}")
-print(f"export PGPORT={shlex.quote(str(port))}")
-print(f"export PGDATABASE={shlex.quote(db)}")
-PY
-)" || die "无法从 $envfile 解析 DATABASE_URL"
-  eval "$parsed"
-  [[ -n "${PGPASSWORD:-}" ]] || die "DATABASE_URL 没有密码"
-}
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deploy/pg_env.sh
+. "$SELF_DIR/pg_env.sh"
 
 NAME=""
 while [[ $# -gt 0 ]]; do
@@ -124,7 +56,8 @@ NAME="$(basename "$NAME")"
 [[ "$NAME" == *.sql.gz ]] || NAME="${NAME}.sql.gz"
 
 # 先解析凭据：缺密码 / sqlite 应立刻失败，不要先报找不到 ossutil。
-load_pg_from_env "$ENVFILE"
+# pg_env.sh 的版本返回非 0 而不是自己 die（对账脚本要能降级），这里保持原有的立即失败语义。
+load_pg_from_env "$ENVFILE" || die "无法从 $ENVFILE 取得 PG 凭据（见上一行）"
 
 if command -v ossutil64 >/dev/null 2>&1; then
   OSSUTIL=ossutil64
@@ -140,13 +73,37 @@ DUMP="$BACKUP_DIR/$NAME"
 
 log "开始 PostgreSQL 备份  root=$ROOT  db=$PGDATABASE  file=$NAME  oss=$OSSUTIL"
 
-# 走 TCP（与 DATABASE_URL 的 host 一致），不依赖 peer auth
+# 走 TCP（与 DATABASE_URL 的 host 一致），不依赖 peer auth。
+# pg_dump 自身失败由 pipefail 捕获（set -euo pipefail）。
 pg_dump -U "$PGUSER" -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" | gzip > "$DUMP"
 # 密码只给 pg_dump 用
 unset PGPASSWORD
-[[ -s "$DUMP" ]] || die "dump 文件为空: $DUMP"
+
+# 校验产物真的是一份完整备份，而不是「文件存在」就算数。
+#
+# 2026-09-23：原来只有 `[[ -s "$DUMP" ]]`，但 gzip 对空输入也会写出 20 字节的
+# header —— 即 pg_dump 退出码为 0 却没吐出内容时，检查照样通过，脚本打印
+# 「备份完成」并把空档上传，覆盖 OSS 上当天的同名对象。备份的失败必须响，
+# 不能等到要恢复的那天才发现。
+gzip -t "$DUMP" 2>/dev/null || die "dump 不是有效的 gzip（很可能写入中断）: $DUMP"
+
+# 一次解压同时拿到「解压字节数」与「有没有结束标记」。
+# 标记不在最后一行（PG 15.15 实测其后还有一行 \unrestrict <token>），所以全量
+# 扫描而不是 tail -N —— 尾部结构随 PG 版本变，位置断言会在某次升级后静默失效。
+read -r raw_bytes has_marker < <(
+  gzip -dc "$DUMP" | awk '
+    /PostgreSQL database dump complete/ { m = 1 }
+    { n += length($0) + 1 }
+    END { printf "%d %d\n", n, m }
+  '
+) || die "解压校验失败: $DUMP"
+
+[[ "$raw_bytes" -gt 0 ]] || die "dump 解压后为空（pg_dump 未输出内容）: $DUMP"
+[[ "$has_marker" == "1" ]] \
+  || die "dump 缺少 pg_dump 结束标记，可能被截断（解压 ${raw_bytes} 字节）: $DUMP"
+
 dump_size="$(du -h "$DUMP" | cut -f1)"
-log "本地: $DUMP ($dump_size)"
+log "本地: $DUMP ($dump_size, 解压 ${raw_bytes} 字节)"
 
 "$OSSUTIL" cp "$DUMP" "${OSS_BUCKET}/backups/db/${NAME}"
 log "已上传: ${OSS_BUCKET}/backups/db/${NAME}"

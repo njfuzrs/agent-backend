@@ -1,8 +1,19 @@
-#!/bin/bash
-# deploy/backup.sh — 数据备份脚本
+#!/usr/bin/env bash
+# deploy/backup.sh — ⚠️ 已废弃（SQLite + 本地 traj_files 时代的备份脚本）
+#
+# 现行备份是 deploy/backup_pg.sh（PostgreSQL → OSS，cron 0 3 * * *）。
+# 本脚本假设的两样东西现在都不成立：
+#   - data/trajectories.db 只是 2026-03 迁库前的历史文件，不是运行时数据源；
+#   - data/traj_files/ 在 STORAGE_BACKEND=oss 下根本不存在（轨迹在 OSS）。
+# 跑它只会产出一份「看起来有备份」的无效产物，比不备份更危险，所以直接拦住。
+# 保留文件仅为历史参考；要删请单独开 PR，不要在别的改动里顺手删。
+set -euo pipefail
 
-set -e
+echo "backup.sh 已废弃：现行 PostgreSQL 备份请用 deploy/backup_pg.sh" >&2
+echo "（本脚本面向 SQLite + 本地 traj_files，当前 STORAGE_BACKEND=oss 下产物无效）" >&2
+exit 1
 
+# ---- 以下为历史实现，不再执行 ----
 BACKUP_DIR="/opt/trajectory-platform/backups"
 DATE=$(date +%Y%m%d_%H%M%S)
 

@@ -115,13 +115,26 @@ def test_backup_pg_missing_password_rejected(tmp_path: Path):
     assert "密码" in combined
 
 
-def test_backup_pg_parses_asyncpg_url(tmp_path: Path):
-    """密码含特殊字符时仍能从 DATABASE_URL 解析出来（不 echo 到日志）。"""
+def test_pg_env_is_tracked_and_not_executable():
+    """pg_env.sh 必须在 git 里，且是 644。
+
+    CD 从 checkout 的 deploy/ 整目录 rsync 到服务器；这个文件没入库就到不了生产，
+    audit / cleanup_deleted / backup_pg 三份 cron 脚本会在第一行 source 就失败。
+    它是被 source 的公共库，不需要 +x（给了反而像个可独立执行的入口）。
+    """
+    assert _git_mode("deploy/pg_env.sh") == "100644"
+
+
+def test_pg_env_parses_asyncpg_url(tmp_path: Path):
+    """密码含特殊字符时仍能从 DATABASE_URL 解析出来（不 echo 到日志）。
+
+    2026-09-23：解析器从 backup_pg.sh 私有搬到 deploy/pg_env.sh，三份脚本共用。
+    """
     (tmp_path / ".env").write_text(
         "DATABASE_URL=postgresql+asyncpg://trajuser:p%40ss%2Fw@localhost:5432/trajdb\n",
         encoding="utf-8",
     )
-    script = (DEPLOY / "backup_pg.sh").read_text(encoding="utf-8")
+    script = (DEPLOY / "pg_env.sh").read_text(encoding="utf-8")
     start = script.index("python3 - \"$envfile\" <<'PY'\n") + len("python3 - \"$envfile\" <<'PY'\n")
     end = script.index("\nPY\n", start)
     code = script[start:end]
@@ -140,6 +153,246 @@ def test_backup_pg_parses_asyncpg_url(tmp_path: Path):
     assert "p@ss/w" in exported
     assert "asyncpg" not in exported
     assert "DATABASE_URL" not in exported
+
+
+def test_pg_scripts_share_one_parser():
+    """凭据解析只能有一份。谁再私开一份，三个月后又分叉。"""
+    lib = (DEPLOY / "pg_env.sh").read_text(encoding="utf-8")
+    assert "def " not in lib  # 是 bash 库，不是 python
+    assert "load_pg_from_env" in lib
+    assert lib.count("DATABASE_URL") >= 1
+    for name in ("backup_pg.sh", "audit.sh", "cleanup_deleted.sh", "migrate_to_oss.sh"):
+        text = (DEPLOY / name).read_text(encoding="utf-8")
+        assert "pg_env.sh" in text, f"{name} 没有 source 公共库"
+        body = _command_body(text)
+        # 不许自己再写一遍 urlparse 解析
+        assert "urlparse" not in body, f"{name} 私自重复实现了解析"
+
+
+def test_pg_scripts_never_use_peer_auth():
+    """psql -U 不带 -h 会走 unix socket，撞 pg_hba 的 `local all all peer` 必失败。
+
+    2026-09-23 前 audit.sh / cleanup_deleted.sh / migrate_to_oss.sh 都是这个写法，
+    每天 cron 必然 FATAL（cleanup 因此从未真正清理过一条）。
+    """
+    for name in ("audit.sh", "cleanup_deleted.sh", "migrate_to_oss.sh"):
+        body = _command_body((DEPLOY / name).read_text(encoding="utf-8"))
+        assert "PG_USER=" not in body, f"{name} 又写死了用户名"
+        # 所有 psql 调用都必须经公共库的 psql_q / psql_v（它们显式带 -h/-p/-U）
+        for line in body.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("psql ") or "$(psql " in stripped:
+                raise AssertionError(f"{name} 直接调 psql，未走 psql_q/psql_v: {stripped}")
+
+
+def test_cleanup_compares_deleted_at_as_timestamp():
+    """deleted_at 是 TEXT 存 ISO8601；与 NOW()::text 做文本比较会永远漏掉边界日。
+
+    ISO 的 'T'(0x54) > 空格(0x20)，所以「刚满 30 天那一天」的记录文本上永远更大。
+    """
+    text = (DEPLOY / "cleanup_deleted.sh").read_text(encoding="utf-8")
+    body = _command_body(text)
+    assert "deleted_at::timestamptz" in body, "必须转成 timestamptz 再比较"
+    assert "(NOW() - INTERVAL '30 days')::text" not in body, "又退回文本比较了"
+    assert "::text" not in body.split("deleted_at::timestamptz")[0][-200:]
+
+
+def test_cleanup_parameterizes_session_id():
+    """session_id 来自上传端（外部输入），不能拼进 SQL。"""
+    body = _command_body((DEPLOY / "cleanup_deleted.sh").read_text(encoding="utf-8"))
+    assert ":'sid'" in body, "应通过 psql 变量传值"
+    assert "session_id = '${sid}'" not in body, "又拼字符串了"
+    assert "session_id = '$sid'" not in body
+
+
+def test_cleanup_has_dry_run():
+    """会真删 OSS 对象与 DB 行的脚本必须能先看再删。"""
+    text = (DEPLOY / "cleanup_deleted.sh").read_text(encoding="utf-8")
+    assert "--dry-run" in text
+    r = _run(["bash", str(DEPLOY / "cleanup_deleted.sh"), "--bogus-flag"])
+    assert r.returncode != 0
+    assert "未知参数" in (r.stderr + r.stdout)
+
+
+# 本地存储 / SQLite 时代的遗留脚本：文件留着做历史参考，但必须拒绝执行。
+# 值是「跑它会看到的替代入口」，断言它出现在提示里，免得只说「已废弃」不说去哪。
+_DEPRECATED_SCRIPTS = {
+    # 假设 SQLite + data/traj_files/，跑它只产出「看起来有备份」的无效产物
+    "backup.sh": "backup_pg.sh",
+    # 建 traj_files 目录、装 sqlite3、给已废弃的 backup.sh 装 cron、覆写旧 unit
+    "setup.sh": "remote_setup.sh",
+    # rsync 到 traj_files/ 再调 reindex；is_oss 下两步都空转却照样打印「完成」
+    "rsync_sync.sh": "sync.py",
+}
+
+
+def test_deprecated_scripts_refuse_to_run():
+    """这三份脚本在 STORAGE_BACKEND=oss 下跑起来只会静默做错事，必须拦在第一行。
+
+    静默比报错坏：rsync_sync 会把文件传到没人读的目录然后打印「完成」，
+    setup 会往 crontab 装一条每天 03:00 必然失败的 backup.sh。
+    """
+    for name, alternative in _DEPRECATED_SCRIPTS.items():
+        r = _run(["bash", str(DEPLOY / name)])
+        assert r.returncode != 0, f"{name} 竟然跑成功了"
+        combined = r.stderr + r.stdout
+        assert "废弃" in combined, f"{name} 没说自己已废弃"
+        assert alternative in combined, f"{name} 没指出替代入口 {alternative}"
+
+
+def test_deprecated_scripts_exit_before_legacy_body():
+    """exit 必须在历史实现之前，否则 set -e 之外的分支仍可能跑到真命令。"""
+    for name in _DEPRECATED_SCRIPTS:
+        body = _command_body((DEPLOY / name).read_text(encoding="utf-8"))
+        assert "exit 1" in body, f"{name} 没有拦截"
+        head = body.split("exit 1")[0]
+        # 只看行首的命令。提示文案里出现 rsync / cron 之类的词是说明，不是执行。
+        for line in head.splitlines():
+            cmd = line.strip()
+            for danger in ("rsync", "crontab", "mkdir", "apt-get", "tar", "systemctl", "pip", "curl"):
+                assert not cmd.startswith(danger + " "), \
+                    f"{name} 在 exit 1 之前就执行了 {danger}: {cmd}"
+
+
+def test_deprecated_scripts_not_executable_in_git():
+    """不给 +x：cron / 手滑 ./ 直接调时先撞 Permission denied，多一道拦。"""
+    for name in _DEPRECATED_SCRIPTS:
+        assert _git_mode(f"deploy/{name}") == "100644", f"deploy/{name} 不该带 +x"
+
+
+def _fake_pg_bin(tmp_path: Path, dump_body: str, dump_rc: int = 0) -> Path:
+    """造一个 bin/ 目录：stub 掉 pg_dump 与 ossutil64，让 backup_pg.sh 能离线跑完。
+
+    ossutil64 打印一行可识别的标记，用来断言「坏 dump 绝不能被上传」。
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    pg_dump = bin_dir / "pg_dump"
+    pg_dump.write_text(f"#!/usr/bin/env bash\n{dump_body}\nexit {dump_rc}\n", encoding="utf-8")
+    pg_dump.chmod(0o755)
+    oss = bin_dir / "ossutil64"
+    oss.write_text('#!/usr/bin/env bash\necho "UPLOADED $*"\nexit 0\n', encoding="utf-8")
+    oss.chmod(0o755)
+    root = tmp_path / "root"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / ".env").write_text(
+        "DATABASE_URL=postgresql+asyncpg://trajuser:pw@localhost:5432/trajdb\n",
+        encoding="utf-8",
+    )
+    return bin_dir
+
+
+def _run_backup_pg(tmp_path: Path, dump_body: str, dump_rc: int = 0):
+    bin_dir = _fake_pg_bin(tmp_path, dump_body, dump_rc)
+    return _run(
+        ["bash", str(DEPLOY / "backup_pg.sh")],
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "AGENT_BACKEND_ROOT": str(tmp_path / "root"),
+            "LANG": "zh_CN.UTF-8",
+        },
+    )
+
+
+# pg_dump 正常结束时会写这行。stub 里复现真实尾部：标记之后还有一行 \unrestrict。
+_GOOD_DUMP = (
+    'echo "-- PostgreSQL database dump"\n'
+    'echo "CREATE TABLE t (id int);"\n'
+    'echo "-- PostgreSQL database dump complete"\n'
+    'echo "--"\n'
+    "echo '\\unrestrict abcdef'"
+)
+
+
+def test_backup_pg_rejects_empty_dump(tmp_path: Path):
+    """pg_dump 退出 0 却没输出时，必须失败且不上传。
+
+    2026-09-23：原来只判 `[[ -s "$DUMP" ]]`，但 gzip 对空输入也会写出 20 字节
+    header，于是空档被判成功并上传，覆盖 OSS 上当天的同名对象 —— 备份的失败
+    要当场响，不能等到要恢复那天才发现。
+    """
+    r = _run_backup_pg(tmp_path, "true")
+    assert r.returncode != 0, "空 dump 竟然算成功"
+    assert "UPLOADED" not in r.stdout + r.stderr, "空 dump 被上传了"
+
+
+def test_backup_pg_rejects_truncated_dump(tmp_path: Path):
+    """有内容但缺 pg_dump 结束标记（写入中断）也必须失败且不上传。"""
+    r = _run_backup_pg(tmp_path, 'echo "CREATE TABLE t (id int);"')
+    assert r.returncode != 0, "截断的 dump 竟然算成功"
+    assert "UPLOADED" not in r.stdout + r.stderr, "截断的 dump 被上传了"
+
+
+def test_backup_pg_accepts_complete_dump(tmp_path: Path):
+    """完整 dump 必须通过并上传，否则校验收得过紧 = 每晚都没有备份（比空备份更糟）。"""
+    r = _run_backup_pg(tmp_path, _GOOD_DUMP)
+    assert r.returncode == 0, f"完整 dump 被误拦: {r.stdout + r.stderr}"
+    assert "UPLOADED" in r.stdout + r.stderr, "完整 dump 没有上传"
+
+
+def test_backup_pg_fails_when_pg_dump_fails(tmp_path: Path):
+    """pg_dump 自身非 0 时由 pipefail 捕获，不得上传半个文件。"""
+    r = _run_backup_pg(tmp_path, 'echo "pg_dump: error: FATAL" >&2', dump_rc=1)
+    assert r.returncode != 0
+    assert "UPLOADED" not in r.stdout + r.stderr
+
+
+def test_backup_pg_does_not_leak_password(tmp_path: Path):
+    """凭据来自 .env，任何路径都不许把密码 echo 到 cron 日志里。"""
+    bin_dir = _fake_pg_bin(tmp_path, _GOOD_DUMP)
+    (tmp_path / "root" / ".env").write_text(
+        "DATABASE_URL=postgresql+asyncpg://trajuser:s3cr3t-Passw0rd@localhost:5432/trajdb\n",
+        encoding="utf-8",
+    )
+    r = _run(
+        ["bash", str(DEPLOY / "backup_pg.sh")],
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "AGENT_BACKEND_ROOT": str(tmp_path / "root"),
+            "LANG": "zh_CN.UTF-8",
+        },
+    )
+    assert "s3cr3t-Passw0rd" not in r.stdout + r.stderr
+
+
+def test_no_var_glued_to_fullwidth_char():
+    """`$var（` 在 UTF-8 locale 下会把全角字符的首字节并进变量名。
+
+    2026-09-23 实测：audit.sh 的 `总计 $db_total（有效 ...）` 在 LANG=C 下侥幸能跑，
+    在 en_US.UTF-8 / zh_CN.UTF-8 下报 `db_total\xef: unbound variable`（脚本带 set -u），
+    也就是修好 peer auth 之后它仍然跑不到打印摘要那一步。cron 的 locale 不由脚本掌握，
+    所以只能在源码里杜绝：变量紧跟非 ASCII 字符时必须写 ${name}。
+    """
+    pat = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7f])")
+    out = subprocess.check_output(["git", "ls-files", "*.sh"], cwd=REPO, text=True)
+    scanned = 0
+    offenders = []
+    for rel in out.split():
+        scanned += 1
+        for i, line in enumerate((REPO / rel).read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            for m in pat.finditer(line):
+                offenders.append(f"{rel}:{i}: {m.group(0)} ← {line.strip()}")
+    assert scanned > 0, "没扫到任何 .sh，git ls-files 失效了"
+    assert not offenders, "变量紧跟全角字符，UTF-8 locale 下会 unbound variable：\n" + "\n".join(offenders)
+
+
+def test_shell_scripts_survive_utf8_locale():
+    """实跑一遍：UTF-8 locale 下这些脚本的失败路径应输出中文提示，而不是 unbound variable。"""
+    for name, args in (
+        ("cleanup_deleted.sh", ["--bogus-flag"]),
+        ("backup.sh", []),
+        ("setup.sh", []),
+        ("rsync_sync.sh", []),
+    ):
+        r = _run(
+            ["bash", str(DEPLOY / name), *args],
+            env={"LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"},
+        )
+        combined = r.stderr + r.stdout
+        assert "unbound variable" not in combined, f"{name} 在 UTF-8 locale 下踩到变量粘连: {combined}"
+        assert "未绑定的变量" not in combined, f"{name} 在 UTF-8 locale 下踩到变量粘连: {combined}"
 
 
 def test_release_parses_alembic_head():
@@ -162,13 +415,26 @@ def test_release_parses_alembic_head():
 
 
 def test_cron_scripts_call_ossutil64():
-    """机器上的二进制是 ossutil64；写 ossutil 会让 cron 静默失败。"""
+    """机器上的二进制是 ossutil64；写死裸 ossutil 会让 cron 静默失败。
+
+    2026-09-23：三份脚本统一成「ossutil64 优先、ossutil 兜底、调用走 $OSSUTIL」，
+    所以断言从「文本里不许出现 ossutil」改成「命令行里不许直接调 ossutil/ossutil64」——
+    前者会把兜底赋值误判成违规，后者才是真正的失败路径。
+    """
     for name in ("backup_pg.sh", "audit.sh", "cleanup_deleted.sh"):
         text = (DEPLOY / name).read_text(encoding="utf-8")
-        assert "ossutil64" in text, name
-        # 允许把 ossutil 当 fallback，但不允许只调 ossutil
-        if name != "backup_pg.sh":
-            assert "ossutil " not in text.replace("ossutil64", "")
+        assert "ossutil64" in text, f"{name} 没有优先用 ossutil64"
+        body = _command_body(text)
+        # 必须先探测 ossutil64 再退到 ossutil，且探测顺序不能反
+        i64 = body.index("command -v ossutil64")
+        assert "OSSUTIL=ossutil64" in body, f"{name} 没把 ossutil64 赋给 $OSSUTIL"
+        if "command -v ossutil " in body:
+            assert i64 < body.index("command -v ossutil "), f"{name} 探测顺序反了"
+        # 所有调用都必须经 $OSSUTIL，不许写死二进制名
+        for line in body.splitlines():
+            stripped = line.strip()
+            for binary in ("ossutil64 ", "ossutil "):
+                assert not stripped.startswith(binary), f"{name} 直接调 {binary.strip()}: {stripped}"
 
 
 def test_release_does_not_own_topology():

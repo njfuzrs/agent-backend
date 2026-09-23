@@ -1,7 +1,23 @@
-#!/bin/bash
-# deploy/setup.sh — ECS 一键部署脚本
-set -e
+#!/usr/bin/env bash
+# deploy/setup.sh — ⚠️ 已废弃（SQLite + 本地 traj_files 时代的 ECS 一键部署脚本）
+#
+# 现行入口：首次装机 deploy/remote_setup.sh，日常发版 deploy/push_code.sh → release.sh。
+# 本脚本的假设现在条条不成立，跑它会把一台已正常的机器改坏：
+#   - 建 data/traj_files/{claude-code,codex,...}：STORAGE_BACKEND=oss 下没有这些目录，
+#     建出来只会让人误以为轨迹还在本地（这正是 .env 里 TRAJ_FILES_DIR 那个死键的来源）；
+#   - apt install sqlite3 + 建 backend/venv：生产是 PostgreSQL 且无 venv（系统 python3）；
+#   - 往 crontab 写 `0 3 * * * deploy/backup.sh`：backup.sh 已废弃并会 exit 1，
+#     真正的日备是 backup_pg.sh，装上这条 cron 等于每天 03:00 静默失败；
+#   - 覆写 /etc/systemd/system/trajectory-platform.service：2026-09-23 切流后
+#     真实 unit 是 agent-backend.service（trajectory-platform 只是 Alias）。
+# 保留文件仅为历史参考；要删请单独开 PR，不要在别的改动里顺手删。
+set -euo pipefail
 
+echo "setup.sh 已废弃：首次装机请用 deploy/remote_setup.sh，发版请用 deploy/push_code.sh" >&2
+echo "（本脚本面向 SQLite + 本地 traj_files，且会给已废弃的 backup.sh 装 cron）" >&2
+exit 1
+
+# ---- 以下为历史实现，不再执行 ----
 PROJECT_DIR="/opt/trajectory-platform"
 
 echo "=== 1. 创建目录结构 ==="

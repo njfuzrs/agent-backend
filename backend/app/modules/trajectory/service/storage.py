@@ -133,8 +133,12 @@ def get_storage() -> StorageBackend:
     """工厂函数：根据配置返回对应的存储后端"""
     if settings.is_oss:
         return OSSStorage()
-    # 用 TRAJ_FILES_DIR 的 parent 作为 base（即 data/ 目录）
-    # 因为 .env 中 TRAJ_FILES_DIR 是绝对路径，比 SESSIONS_DIR 的默认值更可靠
+    # 仅本地模式走到这里。storage key 形如 sessions/{sid}/session.traj.gz，
+    # 是相对 data/ 的路径，所以取 TRAJ_FILES_DIR 的 parent（= data/）当 base。
+    #
+    # 注意 TRAJ_FILES_DIR 在 STORAGE_BACKEND=oss 下是死键（这行在 is_oss 之后，
+    # 走不到）。生产 .env 里那条残留值指向不存在的目录也不影响运行，
+    # 但别据此以为它还在承重 —— 见 .env.example 存储段的说明。
     return LocalStorage(settings.TRAJ_FILES_DIR)
 
 
