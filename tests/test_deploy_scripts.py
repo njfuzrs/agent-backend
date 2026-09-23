@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import stat
 import subprocess
 from pathlib import Path
@@ -58,6 +59,7 @@ def test_scripts_bash_n():
         "audit.sh",
         "cleanup_deleted.sh",
         "rollback.sh",
+        "pg_env.sh",
     ):
         r = _run(["bash", "-n", str(DEPLOY / name)])
         assert r.returncode == 0, f"{name}: {r.stderr}"
@@ -203,6 +205,152 @@ def test_cleanup_parameterizes_session_id():
     assert ":'sid'" in body, "应通过 psql 变量传值"
     assert "session_id = '${sid}'" not in body, "又拼字符串了"
     assert "session_id = '$sid'" not in body
+
+
+def _psql_v_function_body() -> str:
+    """取出 pg_env.sh 里 psql_v 的函数体（不含注释）。"""
+    text = (DEPLOY / "pg_env.sh").read_text(encoding="utf-8")
+    start = text.index("psql_v() {")
+    end = text.index("\n}", start)
+    return _command_body(text[start:end])
+
+
+def test_psql_v_uses_stdin_not_dash_c():
+    """psql 只对脚本输入做 :'name' 插值；-c 会原样发给服务端并报 syntax error。
+
+    2026-09-23 生产 psql 14.24 实测：`psql -v sid=abc -c "select :'sid';"` 失败，
+    同条 SQL 走 stdin 才得到 abc。本地 stub 不解析变量，所以用源码形状锁住。
+    """
+    body = _psql_v_function_body()
+    assert "-c" not in body, "psql_v 又把 SQL 放进 -c 了"
+    assert "ON_ERROR_STOP=1" in body, "stdin 模式遇 SQL 错误默认仍返回 0"
+    assert "printf" in body
+
+
+def _make_psql_stub(tmp_path: Path) -> tuple[Path, Path]:
+    """stub psql：记下 argv / stdin，并复现生产 14.24 的两处陷阱。
+
+    - `-c` 遇到 `:'name'` → 退出 1（syntax error at or near ":"）
+    - stdin 脚本模式：SQL 含 no_such_table 时，无 ON_ERROR_STOP 退出 0，有则退出 3
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    log = tmp_path / "psql-invocations.log"
+    stub = bin_dir / "psql"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f"LOG={log.as_posix()!r}\n"
+        + r"""
+stdin=""
+if [[ ! -t 0 ]]; then
+  stdin=$(cat)
+fi
+{
+  printf 'ARGV'
+  for a in "$@"; do printf '\t%s' "$a"; done
+  printf '\n'
+  printf 'STDIN:%s\n' "$stdin"
+} >> "$LOG"
+
+c_mode=0
+sql=""
+on_error_stop=0
+args=("$@")
+i=0
+while [[ $i -lt ${#args[@]} ]]; do
+  case "${args[$i]}" in
+    -c)
+      c_mode=1
+      i=$((i + 1))
+      sql="${args[$i]:-}"
+      ;;
+    -v)
+      i=$((i + 1))
+      kv="${args[$i]:-}"
+      if [[ "$kv" == "ON_ERROR_STOP=1" ]]; then
+        on_error_stop=1
+      fi
+      ;;
+  esac
+  i=$((i + 1))
+done
+
+if [[ "$c_mode" -eq 1 ]]; then
+  if [[ "$sql" == *:* ]]; then
+    echo 'ERROR:  syntax error at or near ":"' >&2
+    exit 1
+  fi
+  printf '%s\n' "$sql"
+  exit 0
+fi
+
+if [[ "$stdin" == *"no_such_table"* ]]; then
+  echo 'ERROR:  relation "no_such_table" does not exist' >&2
+  if [[ "$on_error_stop" -eq 1 ]]; then
+    exit 3
+  fi
+  exit 0
+fi
+printf 'ok\n'
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    return bin_dir, log
+
+
+def _invoke_psql_v(
+    tmp_path: Path, sql: str, pairs: list[tuple[str, str]] | None = None
+):
+    bin_dir, log = _make_psql_stub(tmp_path)
+    pair_args = ""
+    for k, v in pairs or []:
+        pair_args += f" {shlex.quote(k)} {shlex.quote(v)}"
+    script = (
+        "set -euo pipefail\n"
+        f". {shlex.quote(str(DEPLOY / 'pg_env.sh'))}\n"
+        "export PGHOST=localhost PGPORT=5432 PGUSER=trajuser "
+        "PGPASSWORD=pw PGDATABASE=trajdb\n"
+        f"psql_v {shlex.quote(sql)}{pair_args}\n"
+    )
+    r = _run(
+        ["bash", "-c", script],
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LANG": "C",
+        },
+    )
+    return r, log
+
+
+def test_psql_v_sends_sql_on_stdin(tmp_path: Path):
+    """运行时锁：SQL 走 stdin，变量走 -v，且必须开 ON_ERROR_STOP。"""
+    r, log = _invoke_psql_v(
+        tmp_path,
+        "delete from trajectories where session_id = :'sid';",
+        [("sid", "abc'; drop table t; --")],
+    )
+    assert r.returncode == 0, r.stderr + r.stdout
+    recorded = log.read_text(encoding="utf-8")
+    argv_line = next(line for line in recorded.splitlines() if line.startswith("ARGV"))
+    stdin_line = next(line for line in recorded.splitlines() if line.startswith("STDIN:"))
+    argv = argv_line.split("\t")[1:]
+    assert "-c" not in argv, f"SQL 被塞进 -c: {argv}"
+    assert "ON_ERROR_STOP=1" in argv
+    assert any(a.startswith("sid=") for a in argv), argv
+    # 注入载荷只能出现在 -v 的值里，不能被拼进 SQL
+    sid_arg = next(a for a in argv if a.startswith("sid="))
+    assert "drop table" in sid_arg
+    assert "drop table" not in stdin_line
+    assert ":'sid'" in stdin_line
+    assert "-h" in argv and "-p" in argv and "-U" in argv and "-d" in argv
+
+
+def test_psql_v_sql_error_is_nonzero(tmp_path: Path):
+    """stdin 模式遇 SQL 错误必须非 0，否则 cleanup 的 `if ! psql_v` 会把失败当成功。"""
+    r, _log = _invoke_psql_v(tmp_path, "select * from no_such_table;")
+    assert r.returncode != 0, "SQL 错误被当成成功了（多半是漏了 ON_ERROR_STOP=1）"
 
 
 def test_cleanup_has_dry_run():
