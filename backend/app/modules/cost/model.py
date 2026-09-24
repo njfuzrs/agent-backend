@@ -1,7 +1,13 @@
 """cost 模块 ORM：usage_ledger + budgets + budget_audit。
 
-列类型跟本仓惯例：时间用 Text 存 ISO；金额用 REAL（轨迹 `total_cost_usd` 已是
-REAL，`0001_baseline` 同款）。不要用 Numeric —— SQLite 本地开发会漂。
+列类型跟本仓惯例：时间用 Text 存 ISO。金额用 Double：Postgres 上是
+`double precision`（float8）。`0010` 写成 REAL，在 Postgres 上落成 `real`
+（float4），`0.01` 存成 `0.009999999776482582`，下发后被客户端 `toFixed(2)`
+吃成 `$0.00`（验收 F3）。`0011` 把金额列改过来。
+
+不要用 Numeric：SQLite 本地开发会漂。也不要退回 REAL：SQLite 上 REAL 与
+DOUBLE 都是 8 字节，精度问题只在 Postgres 的 float4。轨迹
+`total_cost_usd` 仍是 REAL，那是另一张表，不在本次范围。
 
 为什么 `ts` 用 Integer 不用 Text：它来自 Unix **秒** epoch（~1.7e9，PG int4
 上限内）。存 Text 会让按时间排序变成字典序。`received_at` 用 Text ISO
@@ -20,7 +26,7 @@ REAL，`0001_baseline` 同款）。不要用 Numeric —— SQLite 本地开发�
 预算变更走 budget_audit，对标 policy_audit。
 """
 
-from sqlalchemy import REAL, Column, ForeignKey, Index, Integer, Text, text
+from sqlalchemy import Column, Double, ForeignKey, Index, Integer, Text, text
 
 from app.core.db import Base
 
@@ -48,16 +54,16 @@ class UsageLedger(Base):
     cache_write = Column(Integer, nullable=False, default=0)
     uncached_input = Column(Integer, nullable=False, default=0)
     output = Column(Integer, nullable=False, default=0)
-    cost_usd = Column(REAL, nullable=False)  # **含**影子。对账用
-    savings_usd = Column(REAL, nullable=False, default=0)
+    cost_usd = Column(Double, nullable=False)  # **含**影子。对账用
+    savings_usd = Column(Double, nullable=False, default=0)
     duration_ms = Column(Integer, nullable=False, default=0)
     # 缺 = 无影子，存 NULL 不存 0（0 与「旧数据没有这个字段」在读侧不可区分）
     side_input_tokens = Column(Integer, nullable=True)
     side_output_tokens = Column(Integer, nullable=True)
-    side_cost_usd = Column(REAL, nullable=True)
+    side_cost_usd = Column(Double, nullable=True)
     endpoint_host = Column(Text, nullable=True)
     app_version = Column(Text, nullable=True)
-    peak_ratio = Column(REAL, nullable=True)
+    peak_ratio = Column(Double, nullable=True)
 
     __table_args__ = (
         Index("uq_usage_ledger_device_session", "device_id", "session_id", unique=True),
@@ -85,7 +91,7 @@ class Budget(Base):
     org_id = Column(Text, nullable=False)
     # session / daily / weekly / monthly
     period = Column(Text, nullable=False)
-    limit_usd = Column(REAL, nullable=False)
+    limit_usd = Column(Double, nullable=False)
     # alert / block。没有 downgrade（T1 没接到 loop）
     enforcement = Column(Text, nullable=False, server_default="alert", default="alert")
     # 非空 = 不进下发（对标 policy.disabled_at）

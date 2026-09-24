@@ -427,6 +427,23 @@ def test_org_budget_is_delivered_with_default_alert(client):
     assert resp.headers.get("etag", "").startswith('"')
 
 
+def test_small_limit_roundtrips_exactly(client):
+    """验收 F3：`0.01` 不能被存成 float4 的 `0.009999999776482582`。
+
+    Postgres 上 `real` 是 float4，`0.01` 不精确；`0011` 改成 double precision 之后
+    下发值必须与写入值逐位相等。SQLite 上 REAL 本就是 8 字节，这条在本地也成立，
+    用来拦住「下发前又被收成 float32」。列类型本身由 `alembic check` 对模型把关。
+    """
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-cent")
+    assert _create_budget(client, limit_usd=0.01).status_code == 201
+
+    body = _get_budget(client, cred).json()
+    assert body["limit_usd"] == 0.01
+    # float4 的 0.01。相等即说明值又被收成了 float32。
+    assert body["limit_usd"] != 0.009999999776482582
+
+
 def test_device_budget_wins_over_team_and_org_without_merge(client):
     code = _issue_code(client)
     cred = _enroll(client, code, "dev-win")
