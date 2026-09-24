@@ -118,7 +118,7 @@ export default function DeviceList() {
     {
       title: '操作',
       key: 'action',
-      width: 220,
+      width: 280,
       render: (_value, record) => (
         <Space size="small">
           <Button
@@ -134,6 +134,15 @@ export default function DeviceList() {
             onClick={() => navigate(`/audit?device_id=${encodeURIComponent(record.device_id)}`)}
           >
             审计
+          </Button>
+          {/* 只给链接，不在这里加 cost_usd 列：那要把 by-scope 打进设备列表的每次渲染，
+              而且周期不明（列头写「成本」但没人知道是本月还是全部）。 */}
+          <Button
+            type="link"
+            style={{ padding: 0 }}
+            onClick={() => navigate(`/cost?device_id=${encodeURIComponent(record.device_id)}`)}
+          >
+            成本
           </Button>
           <Popconfirm
             title="吊销后该设备立即无法访问控制面，确认？"
