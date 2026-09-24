@@ -10,11 +10,20 @@ User=root
 WorkingDirectory=/opt/trajectory-platform/backend
 Environment=PATH=/opt/trajectory-platform/backend/venv/bin:/usr/bin
 EnvironmentFile=/opt/trajectory-platform/.env
+# 第二个文件只有一行 AGENT_VERSION=<sha>，由 release.sh / rollback.sh 在重启前写。
+# 可选：文件还不存在时（本 unit 先于第一次发版生效）systemd 不因此拒绝启动，
+# 进程的 version 字段记 unknown。不并进上面的 .env——那是人手工维护的。
+EnvironmentFile=-/opt/trajectory-platform/.version
+# stdout 进 journald。不另加文件 handler：轮转、权限、磁盘打满 journald 都已处理。
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agent-backend
 ExecStart=/opt/trajectory-platform/backend/venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 \
     --port 8900 \
     --workers 2 \
-    --log-level info
+    --log-level info \
+    --no-access-log
 Restart=always
 RestartSec=5
 

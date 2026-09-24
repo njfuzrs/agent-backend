@@ -198,6 +198,12 @@ rsync -a --checksum --delete "$SNAP/dist/" "$ROOT/frontend/dist/"
 log "清理 __pycache__"
 find "$ROOT/backend" -type d -name '__pycache__' -prune -exec rm -rf {} +
 
+# 与 release.sh 同一份文件、同一条时序：重启前写，写失败中止。
+# 退回去的进程记的是目标 SHA，不是退之前的那一版。
+printf 'AGENT_VERSION=%s\n' "$TARGET" > "$ROOT/.version" \
+  || die "写 $ROOT/.version 失败（回滚中止：进程会以 version=unknown 启动）"
+log "已写 $ROOT/.version = $TARGET （重启前）"
+
 log "systemctl restart $UNIT"
 systemctl restart "$UNIT"
 

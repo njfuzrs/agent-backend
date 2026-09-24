@@ -1,0 +1,191 @@
+"""请求上下文与访问日志。
+
+一条请求结束时打一条 ``agent.access``，字段用方案 §3.2 的三层。
+uvicorn 的 access log 关掉（unit 带 ``--no-access-log``），否则同一条请求
+在 journald 里有两条对不上的记录。
+
+``device_id`` / ``org_id`` / ``actor`` 不在这里填：本中间件执行时鉴权依赖
+还没跑，没有 ``DeviceContext``。它们由鉴权依赖在通过后写进同一个 contextvar，
+本中间件在请求结束时读（方案 §3.4，已裁决）。
+"""
+
+import re
+import secrets
+import time
+
+from starlette.requests import Request
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.core.logging import bind_context, clear_context, context_value, get_logger
+
+logger = get_logger("agent.access")
+
+# 客户端传来的编号只在符合这个形状时采用。不设限制的话，一个换行就能把
+# 一条日志拆成两条（方案 §3.3）。
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+
+# 永远成功、只有心跳意义的路由。只在 2xx 时跳过，非 2xx 照记——
+# 跳过规则把失败也吞掉，就退回「出事只能靠客户端状态码倒推」。
+# 用路由模板而不是真实路径：真实路径的基数等于 session 数，无法枚举。
+QUIET_ROUTES = ("/api/v1/health",)
+
+# 轮询接口。量大，但失败恰恰要看见，所以不丢弃，用级别解决（方案 §3.4）：
+# 快速 2xx 降到 debug（默认 info 下不输出），慢或失败照记。
+# 不设配置项。运行时能把一个接口静音，就一定会有人静音掉不该静的那个。
+POLLED_ROUTES = ("/api/v1/ctl/flags", "/api/v1/ctl/policy", "/api/v1/ctl/budget")
+
+# 慢的阈值。超过它，即便是轮询的 2xx 也升到 info。
+SLOW_REQUEST_MS = 1000
+
+# 耗时用的时钟。单独一个名字是为了让测试能替换它——替换 time.monotonic
+# 会冻结整个进程（sqlite、httpx 超时都靠它），测试会卡死。
+_now = time.monotonic
+
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def generate_request_id() -> str:
+    """32 个十六进制字符，与 W3C traceparent 的 trace-id 同长。
+
+    将来接 OpenTelemetry 是「把同一个值同时写进 traceparent」，
+    不是推翻重来（方案 §3.3）。不为此引入新依赖。
+    """
+    return secrets.token_hex(16)
+
+
+def adopt_request_id(header_value: str) -> str:
+    """采用客户端传来的编号；形状不对（含换行、太短、太长）就自己生成。"""
+    candidate = header_value.strip()
+    if _REQUEST_ID_RE.fullmatch(candidate):
+        return candidate
+    return generate_request_id()
+
+
+def client_ip(scope: Scope) -> str:
+    """取调用方地址。
+
+    ``X-Forwarded-For`` 只在直连对端是 loopback 时信任——前面只有本机 nginx。
+    不做成可配置的信任列表：一旦可配置，就会有人配成信任所有人，伪造来源。
+    真出现第二层反代时改这里，那是一次有意的变更（方案 §3.4）。
+    """
+    client = scope.get("client")
+    peer = client[0] if client else ""
+    if peer in _LOOPBACK:
+        for key, value in scope.get("headers") or ():
+            if key == b"x-forwarded-for":
+                first = value.decode("latin-1", errors="replace").split(",")[0].strip()
+                if first:
+                    return first
+                break
+    return peer or "-"
+
+
+def route_template(request: Request) -> str:
+    """路由模板，基数等于接口数，才能回答「哪个接口变慢了」。
+
+    真实路径的基数等于 session 数、设备数，无法聚合。匹配不上（404）记 ``-``，
+    而不是把真实路径填进来——填进来就退回无法聚合的状态。
+
+    Starlette 不把匹配到的路由对象放进 scope，但 ``scope["endpoint"]`` 指向
+    命中的处理函数，而 APIRoute 的 ``path`` 在 ``include_router`` 时已经拼上
+    前缀（``/api/v1/trajectories/{session_id}`` 这种）。404 没有 endpoint，记 ``-``。
+
+    必须在请求**结束**时取：进入时路由还没匹配。
+    """
+    endpoint = request.scope.get("endpoint")
+    if endpoint is None:
+        return "-"
+    for candidate in request.app.routes:
+        if getattr(candidate, "endpoint", None) is endpoint:
+            return candidate.path
+    return "-"
+
+
+def _header(scope: Scope, name: bytes) -> str:
+    for key, value in scope.get("headers") or ():
+        if key == name:
+            return value.decode("latin-1", errors="replace")
+    return ""
+
+
+class RequestContextMiddleware:
+    """纯 ASGI 中间件。
+
+    不用 ``BaseHTTPMiddleware``：它把请求包进独立的任务里跑，结束之后
+    ``scope["endpoint"]`` 还在，但异常路径上的状态码要自己兜（进入时先记 500，
+    正常发出响应后再改掉）。访问日志的价值在 ``route`` 字段上（方案 §3.4）。
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = adopt_request_id(_header(scope, b"x-request-id"))
+        method = scope.get("method", "")
+        # path 不含 query。列表接口的 query 里有检索词，检索词可能是代码或内部名称。
+        path = scope.get("path", "")
+        bind_context(
+            request_id=request_id,
+            method=method,
+            path=path,
+            client_ip=client_ip(scope),
+        )
+        scope.setdefault("state", {})["request_id"] = request_id
+
+        status_code = 500
+        started = _now()
+
+        async def send_with_id(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                headers = list(message.get("headers") or [])
+                headers.append((b"x-request-id", request_id.encode("ascii")))
+                message["headers"] = headers
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_id)
+        finally:
+            duration_ms = round((_now() - started) * 1000, 1)
+            try:
+                self._access_log(scope, status_code, duration_ms)
+            finally:
+                clear_context()
+
+    def _access_log(self, scope: Scope, status_code: int, duration_ms: float) -> None:
+        request = Request(scope)
+        route = route_template(request)
+        if route in QUIET_ROUTES and status_code < 400:
+            return
+
+        fields = {
+            "event": "request_completed",
+            "route": route,
+            "status": status_code,
+            "duration_ms": duration_ms,
+        }
+        # 鉴权依赖写进上下文的字段，读得到才带。读不到就省略，不写空串。
+        for key in ("auth", "device_id", "org_id", "actor"):
+            value = context_value(key)
+            if value:
+                fields[key] = value
+
+        level = _access_level(route, status_code, duration_ms)
+        log = getattr(logger, level)
+        log("request completed", **fields)
+
+
+def _access_level(route: str, status_code: int, duration_ms: float) -> str:
+    """按结果定级别，不按接口重要性。``journalctl -p warning`` 因此能看到全部失败。"""
+    if status_code >= 500:
+        return "error"
+    if status_code >= 400:
+        return "warning"
+    if route in POLLED_ROUTES and status_code < 300 and duration_ms < SLOW_REQUEST_MS:
+        return "debug"
+    return "info"

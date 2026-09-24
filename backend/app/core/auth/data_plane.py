@@ -17,6 +17,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.core.auth.session import read_session
 from app.core.config import settings
+from app.core.logging import bind_context
 
 # auto_error=False：没有 Authorization 头时返回 None 而不是直接 401，
 # 这样才能落到 cookie 会话那条分支上。
@@ -38,12 +39,15 @@ def verify_basic_auth(
     """
     session_user = read_session(request)
     if session_user:
+        # 只记种类，不记 cookie 值。访问日志在请求结束时读这个上下文（方案 §3.4）。
+        bind_context(auth="session", actor=session_user)
         return session_user
 
     if credentials is not None:
         ok_user = secrets.compare_digest(credentials.username, settings.AUTH_USERNAME)
         ok_pass = secrets.compare_digest(credentials.password, settings.AUTH_PASSWORD)
         if ok_user and ok_pass:
+            bind_context(auth="basic", actor=credentials.username)
             return credentials.username
 
     raise HTTPException(
@@ -58,3 +62,5 @@ def verify_upload_token(request: Request):
     token = request.headers.get("X-Upload-Token", "")
     if not secrets.compare_digest(token, settings.UPLOAD_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid upload token")
+    # 通过才记。失败日志归 PR-L2，这里不打——否则 L1 会提前改错误响应的可观测性。
+    bind_context(auth="upload_token")

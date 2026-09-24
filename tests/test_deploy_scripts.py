@@ -806,6 +806,10 @@ def test_rollback_never_downgrades():
     # 回滚必须逐字节：rsync 默认 size+mtime 快速判断，-a 又保留 mtime，
     # 同名不同版本可能被跳过（本地演练踩到过）。两条 rsync 都要 --checksum。
     assert body.count("rsync -a --checksum --delete") == 2
+    # 退回去的进程记目标 SHA，且写在重启之前。写失败中止，不带 unknown 启动。
+    assert "AGENT_VERSION=" in text
+    assert text.index("AGENT_VERSION=") < text.index('log "systemctl restart')
+    assert "写 $ROOT/.version 失败" in text
 
 
 def test_release_snapshots_for_rollback():
@@ -823,6 +827,16 @@ def test_release_snapshots_for_rollback():
     # 快照发生在 health 之后（成功才留）；覆盖前先存旧的那份
     assert text.index("PREV_SHA") < text.index("rsync_app\n")
     assert text.index('log "已写 $ROOT/.deploy-sha') < text.index("prune_releases ||")
+    # .version 表达「这个进程用哪份代码启动」，必须写在重启之前；
+    # .deploy-sha 表达「这次发版是否成功」，必须写在 health 之后。两者时序相反。
+    # 有迁移走 start、无迁移走 restart，两条真实的重启都要在写版本之后。
+    # 前面还有一行日志也含 systemctl restart 这几个字，所以锚定到带引号的命令行，
+    # 否则会比到日志那行，把「写在重启前」判成「写在重启后」。
+    assert text.index("AGENT_VERSION=") < text.index('systemctl start "$UNIT"')
+    assert text.index("AGENT_VERSION=") < text.index('systemctl restart "$UNIT"')
+    assert text.index('systemctl restart "$UNIT"') < text.index('log "已写 $ROOT/.deploy-sha')
+    # 写失败中止发版。不写这个，进程会带 version=unknown 起来且没人知道。
+    assert "写 $ROOT/.version 失败" in text
 
 
 def test_deploy_yml_rollback_job():

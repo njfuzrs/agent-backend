@@ -27,6 +27,12 @@ ignore = [
     "UP045",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# main.py 先调 configure_logging() 再导入业务路由：日志配置必须早于任何业务
+# logger 的创建，否则那些 logger 沿用配置前的 handler，线上表现为「偶现没日志」。
+# 这个文件的导入因此不可能全部位于文件顶部。只豁免这一个文件。
+"app/main.py" = ["E402"]
+
 [tool.pytest.ini_options]
 testpaths = ["../tests"]
 pythonpath = ["."]

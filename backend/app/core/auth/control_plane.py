@@ -27,6 +27,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core import db as db_mod
 from app.core.config import settings
+from app.core.logging import bind_context
 from app.core.timeutil import is_expired, utc_now
 from app.modules.identity.model import Device, DeviceCredential
 from app.modules.identity.service.secrets import hash_secret
@@ -87,6 +88,9 @@ async def require_device(request: Request) -> DeviceContext:
             team_id=device.team.team_id if device.team is not None else "",
             user_id=device.user_id or "",
         )
+        # 通过之后才写。鉴权失败的请求不带这两个字段，这是对的：
+        # 失败靠 reason 而不是设备标识（方案 §3.4，已裁决）。
+        bind_context(auth="device", device_id=ctx.device_id, org_id=ctx.org_id)
 
         now = utc_now()
         now_iso = now.isoformat()
