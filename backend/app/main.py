@@ -16,6 +16,9 @@ from sqlalchemy import text
 from app.core import db as db_mod
 from app.core.config import settings
 from app.core.router import auth
+from app.modules.cost.router import admin as cost_admin
+from app.modules.cost.router import ingest as cost_ingest
+from app.modules.cost.router import serve as cost_serve
 from app.modules.event.router import admin as event_admin
 from app.modules.event.router import ingest as event_ingest
 from app.modules.flag.router import admin as flag_admin
@@ -90,6 +93,9 @@ app.include_router(export.router, prefix="/api/v1")
 # events 上报：数据面方向、控制面鉴权（require_device）。路径故意不在 /ctl/ 下，
 # 现有门禁 ② 扫不到它 —— 见 test_events_ingest_requires_device。
 app.include_router(event_ingest.router, prefix="/api/v1")
+# usage/ledger 上报：同款「数据面方向、控制面鉴权」。upsert 能覆盖，漏挂鉴权
+# 比 events 灌水更严重。见 test_usage_ledger_ingest_requires_device。
+app.include_router(cost_ingest.router, prefix="/api/v1")
 
 # ---- 控制面：策略向客户端流入 ----
 # /ctl/** 鉴权一律 Depends(require_device)，两个显式例外：
@@ -102,12 +108,15 @@ app.include_router(identity_enroll.router, prefix="/api/v1")
 app.include_router(identity_whoami.router, prefix="/api/v1")
 app.include_router(flag_serve.router, prefix="/api/v1")
 app.include_router(policy_serve.router, prefix="/api/v1")
+app.include_router(cost_serve.router, prefix="/api/v1")
 
-# ---- 管理台：身份 / flag / policy / event（cookie 会话，给人看，不给客户端下发策略）----
+# ---- 管理台：身份 / flag / policy / event / cost（cookie 会话，给人看，不给客户端下发策略）----
 app.include_router(identity_admin.router, prefix="/api/v1")
 app.include_router(flag_admin.router, prefix="/api/v1")
 app.include_router(policy_admin.router, prefix="/api/v1")
 app.include_router(event_admin.router, prefix="/api/v1")
+app.include_router(cost_admin.ledger_router, prefix="/api/v1")
+app.include_router(cost_admin.budget_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

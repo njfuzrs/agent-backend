@@ -252,6 +252,21 @@ jobs:
           echo "events(no auth) -> $code"
           test "$code" = 401
 
+          # 预算下发无 Bearer 必须 401：不是 404（忘注册）、不是 200/204（误做成无认证）。
+          # 无认证下发 enforcement=block 等于远程关停全公司 agent。
+          code="$(curl_code "$BASE/api/v1/ctl/budget")"
+          echo "budget $code"
+          test "$code" = 401
+
+          # 账本上报无凭据必须 401：匿名 upsert 能把别人的成本改成 0。
+          # 字段给齐但无 Bearer —— 鉴权依赖先于 body 解析，漏挂才会走到 400。
+          code=$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ul -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            -d '{"ts":0,"sessionId":"smoke","model":"m","provider":"p","promptTotal":0,"cacheHit":0,"cacheWrite":0,"uncachedInput":0,"output":0,"costUSD":0,"savingsUSD":0,"durationMs":0}' \
+            "$BASE/api/v1/usage/ledger")
+          echo "usage/ledger(no auth) -> $code"
+          test "$code" = 401
+
           # 2026-09-22 起 IP :80 明文内容通道关（410）。
           # 不跟随 3xx：禁止 301 到 https://IP（证书不含 IP，那是 2026-08-05 的死锁）。
           ip_code="$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ip -w '%{http_code}' "http://${DEPLOY_HOST}/traj/api/v1/health")"

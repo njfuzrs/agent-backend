@@ -661,6 +661,9 @@ def test_deploy_yml_contract():
     assert "/api/v1/ctl/policy" in text
     assert "/api/v1/events" in text
     assert '{"events":[]}' in text
+    # M5：两条新通道的冒烟必须在。删掉等于「漏挂鉴权上线也不会红」。
+    assert "/api/v1/ctl/budget" in text
+    assert "/api/v1/usage/ledger" in text
     assert "121.196.144.227" not in text
     # 2026-09-22 起 IP 明文必须 410，不能再当 200 救生通道
     assert 'test "$ip_code" = 410' in text
