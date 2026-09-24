@@ -6,7 +6,6 @@
 由 tests/test_boundaries.py 的快照测试锁定。
 """
 
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,6 +14,14 @@ from sqlalchemy import text
 
 from app.core import db as db_mod
 from app.core.config import settings
+from app.core.logging import configure_logging, get_logger
+
+# 必须在业务路由 import 之前配置。那些模块的 logger 若在配置前被创建，
+# 会沿用上次进程或测试留下的 handler，表现为「本地偶现没日志」（方案 §5）。
+configure_logging()
+logger = get_logger("agent")
+
+from app.core.middleware import RequestContextMiddleware
 from app.core.router import auth
 from app.modules.cost.router import admin as cost_admin
 from app.modules.cost.router import ingest as cost_ingest
@@ -36,10 +43,6 @@ from app.modules.trajectory.router import (
 )
 from app.modules.trajectory.schemas import HealthResponse
 
-# 用 uvicorn.error 这个 logger：uvicorn 只给自己的 logger 挂 handler，
-# 挂在 __name__ 上的 INFO 会被丢掉（实测启动时看不到 schema 版本行）。
-logger = logging.getLogger("uvicorn.error")
-
 
 async def _check_schema_version() -> None:
     """启动时只做「检查」，不做「建表/加列」。
@@ -53,12 +56,15 @@ async def _check_schema_version() -> None:
             row = await conn.execute(text("SELECT version_num FROM alembic_version"))
             current = row.scalar()
     except Exception:
-        logger.warning(
-            "未找到 alembic_version 表 —— 该库未被迁移管理。"
-            "新库请执行 `alembic upgrade head`；已有数据的库请执行 `alembic stamp 0001`。"
-        )
+        # 启动日志没有请求，不带 request_id（方案 §3.10）。处置方式写在本函数的
+        # docstring 里，不进日志：msg 只留固定短句，检索靠 event 与 outcome。
+        logger.warning("schema check failed", event="schema_checked", outcome="error")
         return
-    logger.info("数据库 schema 版本: %s", current)
+    # 版本号是这次检查唯一的事实。空表读到 None 时省略，不写空串。
+    fields = {"event": "schema_checked", "outcome": "ok"}
+    if current:
+        fields["schema_version"] = str(current)
+    logger.info("schema checked", **fields)
 
 
 @asynccontextmanager
@@ -73,14 +79,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
+# CORS 在最外层：请求先过它再生成编号，这样 4xx 的预检也带得上 X-Request-ID。
+# expose_headers 不带的话浏览器里的采集端读不到这个响应头，两侧对不上号。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+# 后加的中间件在外层。访问日志要包住全部路由，所以加在 CORS 之前（运行时在其内）。
+app.add_middleware(RequestContextMiddleware)
 
 # ---- 平台内核：管理台会话（凭据不进 localStorage，见 §PR-0.5）----
 app.include_router(auth.router, prefix="/api/v1")

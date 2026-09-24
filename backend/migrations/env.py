@@ -28,7 +28,11 @@ from app.core.db import Base  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False：fileConfig 的默认值会把「配置文件里没点名的
+    # logger」全部设成 disabled。测试在同一进程里先跑迁移再跑应用，于是第二条用例
+    # 开始，app.core.logging 配好的 logger 就被静默关掉，日志一条都不再产生。
+    # 迁移只想要自己的 alembic/sqlalchemy logger，不该碰应用的。
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

@@ -2,6 +2,8 @@
 
 .env
 backend/.env
+# 发版脚本写在生产机 $ROOT 下的版本文件。本地没有，也不该进仓。
+.version
 data/
 __pycache__/
 *.pyc

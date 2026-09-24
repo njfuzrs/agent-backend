@@ -245,7 +245,7 @@ rsync_app() {
   rsync -a --delete \
     "$SOURCE/frontend/dist/" "$ROOT/frontend/dist/"
   # 单文件覆盖（不 --delete 整个 backend/）
-  for f in requirements.txt alembic.ini pyproject.toml; do
+  for f in requirements.txt requirements.lock alembic.ini pyproject.toml; do
     if [[ -f "$SOURCE/backend/$f" ]]; then
       cp -a "$SOURCE/backend/$f" "$ROOT/backend/$f"
     fi
@@ -286,8 +286,10 @@ if [[ ! -f "$ROOT/deploy/pg_env.sh" ]]; then
   log "警告: 缺 $ROOT/deploy/pg_env.sh，audit/cleanup/backup_pg 将无法运行"
 fi
 
-log "pip3 install -r requirements.txt"
-pip3 install -q -r "$ROOT/backend/requirements.txt"
+log "pip3 install -r requirements.lock"
+# 装锁而不是 requirements.txt。后者只有范围，每次发版都会浮到当时的最新版，
+# 和 CI、和上一台机器都可能不同。锁不在就直接失败，不退回范围文件。
+pip3 install -q -r "$ROOT/backend/requirements.lock"
 
 if [[ "$NEED_MIGRATE" == "1" ]]; then
   log "alembic upgrade head（cwd=$ROOT/backend）"
@@ -298,9 +300,21 @@ if [[ "$NEED_MIGRATE" == "1" ]]; then
     alembic current
   )
   log "启动 $UNIT"
-  systemctl start "$UNIT"
 else
   log "无迁移：systemctl restart $UNIT"
+fi
+
+# 版本表达的是「这个进程用哪份代码启动」，所以写在重启之前，
+# 与 .deploy-sha 的「health 通过之后才落盘」相反（方案 §3.2）。
+# 不写进 .env：那是人手工维护的配置，也和回滚打架。
+# 写失败必须中止发版——进程带 unknown 启动，这次发布就无法按版本排查。
+printf 'AGENT_VERSION=%s\n' "$SHA" > "$ROOT/.version" \
+  || die "写 $ROOT/.version 失败（发版中止：进程会以 version=unknown 启动）"
+log "已写 $ROOT/.version = $SHA （重启前）"
+
+if [[ "$NEED_MIGRATE" == "1" ]]; then
+  systemctl start "$UNIT"
+else
   systemctl restart "$UNIT"
 fi
 
