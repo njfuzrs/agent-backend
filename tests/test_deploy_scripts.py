@@ -5,12 +5,16 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 DEPLOY = REPO / "deploy"
+BACKEND = REPO / "backend"
 
 
 def _run(args: list[str], env: dict[str, str] | None = None, cwd: Path | None = None):
@@ -614,6 +618,56 @@ def _command_body(text: str) -> str:
         for line in text.splitlines()
         if line.lstrip() and not line.lstrip().startswith("#")
     )
+
+
+def test_release_installs_from_lock_not_ranges():
+    """发版必须装 requirements.lock。
+
+    requirements.txt 只有范围。release.sh 每次发版都现装，装范围文件就会浮到
+    当时的最新版，和 CI、和上一台机器都可能不同。FastAPI 0.137 改了路由树的
+    形状，访问日志因此在 CI 上全记成 "-"，就是这么来的。
+    """
+    text = (DEPLOY / "release.sh").read_text(encoding="utf-8")
+    body = _command_body(text)
+    assert '$ROOT/backend/requirements.lock' in body
+    # 范围文件可以同步进 $ROOT 留一份给人看，但不能再被拿去安装。
+    assert "pip3 install" in body and "requirements.txt" not in body.split("pip3 install", 1)[1]
+    # 锁没同步上去就装，等于发版时才发现缺文件。
+    assert "requirements.lock" in text.split("pip3 install")[0]
+
+
+def test_ci_installs_from_lock():
+    """CI 与发版装同一份。只改一边，版本就再次分叉。"""
+    text = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    body = _command_body(text)
+    assert "backend/requirements.lock" in body
+    assert "backend/requirements.txt" not in body
+
+
+def test_lock_matches_requirements(tmp_path: Path):
+    """锁必须是 requirements.txt 的解析结果。改了范围不重生成，这条红。
+
+    用 uv 重新解析再比对。uv 不在时跳过而不是失败：这条锁的是「两份文件一致」，
+    没装 uv 的环境验证不了，但 CI 上有 uv。
+    """
+    if not shutil.which("uv"):
+        pytest.skip("未安装 uv，无法重解析 requirements.txt")
+    expected = tmp_path / "requirements.lock"
+    # 在 backend/ 下解析，和生成锁时的工作目录一致。uv 的 via 注释写的是
+    # 传给它的路径，目录不同注释就不同，比对会变成假红。
+    r = _run(
+        [
+            "uv", "pip", "compile", "requirements.txt",
+            "--python-version", "3.10",
+            "--python-platform", "x86_64-manylinux_2_28",
+            "-o", str(expected),
+        ],
+        cwd=BACKEND,
+    )
+    assert r.returncode == 0, r.stderr
+    # 头两行是 uv 的命令回显，含输出路径，两边必然不同。比对从依赖本身开始。
+    assert expected.read_text(encoding="utf-8").splitlines()[2:] == \
+        (BACKEND / "requirements.lock").read_text(encoding="utf-8").splitlines()[2:]
 
 
 def test_ci_workflow_name_is_ci():

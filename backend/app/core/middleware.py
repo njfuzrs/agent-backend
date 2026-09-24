@@ -86,19 +86,50 @@ def route_template(request: Request) -> str:
     真实路径的基数等于 session 数、设备数，无法聚合。匹配不上（404）记 ``-``，
     而不是把真实路径填进来——填进来就退回无法聚合的状态。
 
-    Starlette 不把匹配到的路由对象放进 scope，但 ``scope["endpoint"]`` 指向
-    命中的处理函数，而 APIRoute 的 ``path`` 在 ``include_router`` 时已经拼上
-    前缀（``/api/v1/trajectories/{session_id}`` 这种）。404 没有 endpoint，记 ``-``。
+    必须在请求**结束**时取：进入时路由还没匹配，``scope["endpoint"]`` 是空的。
 
-    必须在请求**结束**时取：进入时路由还没匹配。
+    不能只扫 ``app.routes`` 的顶层。FastAPI 0.137 起 ``include_router`` 不再把
+    子路由克隆成扁平列表，顶层是一棵树（release notes 0.137.0 写明 ``router.routes``
+    不再是扁平的 APIRoute 列表）。被 include 进来的路由，顶层节点既没有 ``path``
+    也没有 ``endpoint``，真实 URL 在 ``effective_candidates()`` 展开的节点上，
+    前缀也已经拼进去了。0.137 之前没有这个方法，顶层本身就是带完整前缀的扁平
+    APIRoute，走下面的普通分支。
+
+    两种形状都要认。只认扁平那一种的话，FastAPI 一过 0.137，所有请求的 route
+    都变成 ``-``：轮询降级匹配不上，按接口聚合也退回到无法聚合的真实路径。
+    CI 装到 0.141、本地还是 0.135 时，两条测试一起红，就是这个原因。
+
+    也不读 ``scope["route"]``。0.141 里它指向被 include 之前的原始路由，``path``
+    只剩子路由自己的那一段（``/ctl/flags``），前缀丢了；0.135 里却是拼好前缀的。
+    同一个字段两个版本含义不同。
     """
     endpoint = request.scope.get("endpoint")
     if endpoint is None:
         return "-"
-    for candidate in request.app.routes:
-        if getattr(candidate, "endpoint", None) is endpoint:
-            return candidate.path
+    for node in request.app.routes:
+        found = _route_path_for_endpoint(node, endpoint)
+        if found is not None:
+            return found
     return "-"
+
+
+def _route_path_for_endpoint(node: object, endpoint: object) -> str | None:
+    """在路由树里按处理函数的身份找模板。找不到返回 None。
+
+    与 tests/test_boundaries.py 的 ``_iter_route_node`` 是同一种展开：那边要
+    全部路径来做门禁，这里只取命中的一条。展开方式得保持一致，否则门禁看到的
+    路径和日志记下的会再次分叉。
+    """
+    effective = getattr(node, "effective_candidates", None)
+    if callable(effective):
+        for child in effective():
+            found = _route_path_for_endpoint(child, endpoint)
+            if found is not None:
+                return found
+        return None
+    if getattr(node, "endpoint", None) is endpoint:
+        return getattr(node, "path", None) or None
+    return None
 
 
 def _header(scope: Scope, name: bytes) -> str:

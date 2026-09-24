@@ -245,7 +245,7 @@ rsync_app() {
   rsync -a --delete \
     "$SOURCE/frontend/dist/" "$ROOT/frontend/dist/"
   # 单文件覆盖（不 --delete 整个 backend/）
-  for f in requirements.txt alembic.ini pyproject.toml; do
+  for f in requirements.txt requirements.lock alembic.ini pyproject.toml; do
     if [[ -f "$SOURCE/backend/$f" ]]; then
       cp -a "$SOURCE/backend/$f" "$ROOT/backend/$f"
     fi
@@ -286,8 +286,10 @@ if [[ ! -f "$ROOT/deploy/pg_env.sh" ]]; then
   log "警告: 缺 $ROOT/deploy/pg_env.sh，audit/cleanup/backup_pg 将无法运行"
 fi
 
-log "pip3 install -r requirements.txt"
-pip3 install -q -r "$ROOT/backend/requirements.txt"
+log "pip3 install -r requirements.lock"
+# 装锁而不是 requirements.txt。后者只有范围，每次发版都会浮到当时的最新版，
+# 和 CI、和上一台机器都可能不同。锁不在就直接失败，不退回范围文件。
+pip3 install -q -r "$ROOT/backend/requirements.lock"
 
 if [[ "$NEED_MIGRATE" == "1" ]]; then
   log "alembic upgrade head（cwd=$ROOT/backend）"

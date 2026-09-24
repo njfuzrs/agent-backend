@@ -1,3 +1,8 @@
+# 这里只写范围。真正安装的版本在 requirements.lock，CI 和发版都装那一份，
+# 不装这一份——范围约束会让 CI、本地、生产各装到不同版本（FastAPI 0.137 改了
+# 路由树的形状，访问日志的 route 因此在 CI 上全变成 "-"）。
+# 改了下面的范围之后重生成锁：
+#   uv pip compile requirements.txt --python-version 3.10 --universal -o requirements.lock
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 sqlalchemy>=2.0.0
