@@ -8,7 +8,7 @@
 
 本仓是 **Agent Backend**（企业级 Agent 后端）：sid-code 与 claude-trace 共同面对的服务端，控制面（policy / flag / 身份）与数据面（轨迹 / 事件）同仓部署、鉴权隔离。
 
-轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`）。event / cost 按里程碑迭代，目录可以先不建。
+轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`）。
 
 GitHub 目标仓名 `njfuzrs/agent-backend`。生产路径 `/opt/trajectory-platform`、nginx 前缀 `/traj/`、unit 文件名 `trajectory-platform.service` **故意不改**（采集 URL 已对外冻结）。
 
@@ -75,7 +75,11 @@ agent-backend/
 │   │       │   ├── schemas.py
 │   │       │   ├── router/     # ingest（POST /events）/ admin
 │   │       │   └── service/    # ingest / queries / guard
-│   │       # 规划中、目录尚未建：cost
+│   │       └── cost/           # 模块六：用量账本与预算（M5）
+│   │           ├── model.py    # usage_ledger / budgets / budget_audit
+│   │           ├── schemas.py
+│   │           ├── router/     # ingest（POST /usage/ledger）/ serve（GET /ctl/budget）/ admin
+│   │           └── service/    # ingest（upsert）/ budgets（求值+CRUD）/ queries / guard
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   ├── src/
@@ -121,7 +125,7 @@ agent-backend/
 - **`psql_v` 必须走 stdin**：`psql -c` 不对 `:'name'` 做变量插值（生产 14.24 实测 `syntax error at or near ":"`）；stdin 脚本模式遇 SQL 错误默认仍返回 0，必须带 `-v ON_ERROR_STOP=1`，否则 `cleanup_deleted.sh` 的 `if ! psql_v` 会把删除失败当成功。由 `test_psql_v_*` 拦截
 - **shell 里变量紧跟中文标点必须写 `${name}`**：`$var（` 在 UTF-8 locale 下 bash 会把全角字符首字节并进变量名，`set -u` 下直接 `unbound variable`；`LANG=C` 侥幸能跑，所以本地测不出来。由 `test_no_var_glued_to_fullwidth_char` 全仓扫描
 - **schema 演进只有一条路**：`alembic upgrade head`。原 `init_db()` 的 `create_all` + `_migrate_sqlite_columns()` 已删除 —— 前者不改已有表的列，后者被 `is_sqlite` 挡住（生产是 PG，等于生产无加列路径）。运行时代码不得建表，由边界测试拦截
-- **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`（签发入口 `/ctl/enroll` 除外走一次性注册码；`GET /ctl/flags` 是客户端裸 fetch 的有意豁免）。`GET /ctl/policy` **必须**挂 `require_device`，不要加进豁免名单。`POST /api/v1/events` 数据面方向、控制面鉴权，**不在 `/ctl/` 下**，现有门禁 ② 扫不到，由 `test_events_ingest_requires_device` 专门盯。由边界测试反射检查
+- **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`（签发入口 `/ctl/enroll` 除外走一次性注册码；`GET /ctl/flags` 是客户端裸 fetch 的有意豁免）。`GET /ctl/policy` **必须**挂 `require_device`，不要加进豁免名单。`POST /api/v1/events` 与 `POST /api/v1/usage/ledger` 数据面方向、控制面鉴权，**不在 `/ctl/` 下**，现有门禁 ② 扫不到，由 `test_events_ingest_requires_device` / `test_usage_ledger_ingest_requires_device` 专门盯。`GET /ctl/budget` 虽在 `/ctl/` 下，仍另有 `test_budget_serve_requires_device` 盯豁免名单。由边界测试反射检查
 - **管理台凭据不落 localStorage**：独立登录页走 `/api/v1/auth/login` 下发 HttpOnly + SameSite cookie（无状态 HMAC 签名，跨 worker 有效）。未登录或 401 跳 `/login`。Basic Auth 保留给脚本与 curl
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400
@@ -155,7 +159,7 @@ cd frontend && pnpm run build
 
 # 门禁自查（提交前跑一遍）
 cd backend && ruff check . && alembic check          # lint + schema 漂移
-python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_deploy_scripts.py -v  # 边界 + 身份 + flag + policy + event + 发版脚本
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_cost.py ../tests/test_deploy_scripts.py -v  # 边界 + 身份 + flag + policy + event + cost + 发版脚本
 
 # 数据库迁移
 cd backend && alembic upgrade head                   # 本地：建库/升级

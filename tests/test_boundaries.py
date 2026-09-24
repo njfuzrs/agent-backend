@@ -17,6 +17,9 @@
     ⑥ 无认证豁免名单是白名单，且每个豁免项的代价可机械检查
     ⑦ /ctl/policy 挂 require_device、只读；/api/v1/policies 挂 cookie 会话
     ⑧ POST /events 挂 require_device（不在 /ctl/ 下，② 扫不到）；GET 挂 cookie；只追加
+    ⑨ POST /usage/ledger 挂 require_device（不在 /ctl/ 下，② 扫不到）；
+       GET /ctl/budget 挂 require_device 且不在豁免名单；/budgets/** 挂 cookie；
+       账本无 DELETE；by-scope 响应无 unit_price
 """
 
 import ast
@@ -602,6 +605,136 @@ def test_events_has_no_write_endpoints_besides_ingest():
             offenders.append(f"POST {path}")
     assert not offenders, (
         "events 只追加，以下写端点不该存在:\n  " + "\n  ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# ⑨ cost：账本上报不在 /ctl/ 下（② 扫不到）；预算下发在 /ctl/ 下仍单开一条
+# ---------------------------------------------------------------------------
+def test_usage_ledger_ingest_requires_device():
+    """POST /api/v1/usage/ledger 必须挂 require_device。
+
+    不能靠 test_all_control_endpoints_require_device —— 那条按 /ctl/ 筛。
+    漏挂鉴权 = 任何人能 upsert 覆盖别人的成本（比 events 灌水更严重）。
+    假门禁对策：注释掉 ingest.py 的 Depends(require_device) 必须红。
+    """
+    from app.core.auth.control_plane import require_device
+    from app.main import app
+
+    found = False
+    for path, methods, dependant in _iter_app_routes(app):
+        if (path.rstrip("/") or path) != "/api/v1/usage/ledger":
+            continue
+        if "POST" not in methods:
+            continue
+        found = True
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        assert any(getattr(d, "call", None) is require_device for d in deps), (
+            "POST /api/v1/usage/ledger 没挂 require_device。"
+            "现有门禁 ② 按 /ctl/ 筛，扫不到本端点，漏挂等于无认证覆盖账本。"
+        )
+    assert found, "POST /api/v1/usage/ledger 端点不存在 —— cost 模块是否没注册？"
+
+
+def test_budget_serve_requires_device():
+    """GET /ctl/budget 必须挂 require_device，且不得出现在 CTL_AUTH_EXEMPTIONS。
+
+    门禁 ② 会扫到本端点。仍单开一条：豁免名单加错一行就会无认证下发预算
+    （block 档 = 远程关停全公司 agent）。宁可重复。
+    假门禁对策：把路径加进 CTL_AUTH_EXEMPTIONS 必须红。
+    """
+    from app.core.auth.control_plane import require_device
+    from app.main import app
+
+    found = False
+    for path, methods, dependant in _iter_app_routes(app):
+        if (path.rstrip("/") or path) != "/api/v1/ctl/budget":
+            continue
+        found = True
+        assert "GET" in methods
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        assert any(getattr(d, "call", None) is require_device for d in deps), (
+            "/api/v1/ctl/budget 没挂 require_device。不要把它加进 CTL_AUTH_EXEMPTIONS。"
+        )
+        assert ("GET", "/api/v1/ctl/budget") not in CTL_AUTH_EXEMPTIONS
+    assert found, "/api/v1/ctl/budget 端点不存在"
+
+
+def test_budget_admin_writes_require_web_session():
+    """ /api/v1/budgets/** 写口挂 require_web_session，不在 /ctl/ 下。 """
+    from app.core.auth.session import require_web_session
+    from app.main import app
+
+    checked = 0
+    offenders = []
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/budgets"):
+            continue
+        assert "/ctl/" not in path, f"管理台 budget 端点不得挂在 /ctl/ 下: {path}"
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        if not any(getattr(d, "call", None) is require_web_session for d in deps):
+            offenders.append(f"{','.join(sorted(methods))} {path}")
+        checked += 1
+
+    assert checked > 0, "没找到 /api/v1/budgets 管理端点 —— cost 模块是否没注册？"
+    assert not offenders, (
+        "以下 budget 管理端点没挂 require_web_session:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_usage_ledger_has_no_delete_endpoint():
+    """usage_ledger 只 upsert。不得有 DELETE / PUT 到单行（PATCH 也不要）。
+
+    防的是「顺手加个清脏数据」。账本能删就不是账本。
+    假门禁对策：临时加 @router.delete("/usage/ledger/{id}") 必须红。
+    """
+    from app.main import app
+
+    offenders = []
+    for path, methods, _dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/usage/ledger"):
+            continue
+        writes = {m for m in methods if m in {"PUT", "PATCH", "DELETE"}}
+        if writes:
+            offenders.append(f"{','.join(sorted(writes))} {path}")
+        if "POST" in methods and (path.rstrip("/") or path) != "/api/v1/usage/ledger":
+            offenders.append(f"POST {path}")
+    assert not offenders, (
+        "usage_ledger 只 upsert，以下写端点不该存在:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_usage_stats_response_has_no_unit_price():
+    """by-scope 响应 schema / 示例不得出现 unit_price、cost_per_token、
+    costUSD/promptTotal 这类字段。规划口径陷阱的机械化。
+    假门禁对策：schema 临时加 unit_price: float 必须红。
+    """
+    from app.modules.cost.schemas import UsageByScopeItem, UsageByScopeResponse
+    from app.modules.cost.service.guard import BANNED_UNIT_PRICE_FIELDS
+
+    for model in (UsageByScopeItem, UsageByScopeResponse):
+        fields = set(model.model_fields)
+        leaked = fields & BANNED_UNIT_PRICE_FIELDS
+        assert not leaked, (
+            f"{model.__name__} 含单价字段 {sorted(leaked)}。"
+            "cost_usd 与 prompt_total 口径不同源，禁止相除当单价。"
+        )
+    src = APP_DIR / "modules" / "cost"
+    violations = []
+    for path in src.rglob("*.py"):
+        if path.name == "guard.py":
+            continue  # 禁令集合本身就含这些词
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("*"):
+                continue
+            if "不得" in line or "禁止" in line or "BANNED" in line:
+                continue
+            for banned in BANNED_UNIT_PRICE_FIELDS:
+                if banned in line:
+                    violations.append(f"{path.relative_to(BACKEND_DIR)}:{i} 出现 {banned!r}")
+    assert not violations, (
+        "cost 模块出现单价字段（规划口径陷阱）:\n  " + "\n  ".join(violations)
     )
 
 
