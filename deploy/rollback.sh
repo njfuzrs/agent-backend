@@ -13,7 +13,8 @@
 #   - 只换 backend/app/ 与 frontend/dist/。不动 migrations/、不动 requirements.txt、不 pip
 #   - **绝不** alembic downgrade。0006 的 downgrade() 是空的；破坏性迁移的回滚手段是 pg_dump 恢复
 #   - 快照的 alembic-rev 与线上不一致 → 默认拒绝，提示用迁库前那份 trajdb_pre_*.sql.gz 恢复
-#   - 不 mv /opt、不改 nginx、不覆盖 /etc/systemd/system/*.service
+#   - 不 mv /opt、不改 nginx
+#   - unit 只按白名单收敛日志配置（见 ensure_unit），其余一个字节不动
 #   - 不读、不传、不改业务凭据；.env 必须已经在位，否则拒绝动
 set -euo pipefail
 
@@ -48,6 +49,80 @@ resolve_unit() {
   else
     printf '%s\n' trajectory-platform
   fi
+}
+
+# 与 release.sh 的 ensure_unit 是同一份逻辑。回滚也要收敛 unit：
+# 退回 PR-L1 之前的代码时，--no-access-log 会把旧版 uvicorn 的访问日志一起关掉，
+# 那是旧代码唯一的访问记录，所以旧快照必须把这一行拿掉。
+UNIT_REQUIRED_LINES=(
+  'EnvironmentFile=-/opt/agent-backend/.version'
+  'SyslogIdentifier=agent-backend'
+  # --no-access-log 追加在 ExecStart 行尾，不是独立一行，所以这里只写标记本身。
+  '--no-access-log'
+)
+
+ensure_unit() {
+  local new_code="$1"
+  local unit_path
+  unit_path="$(systemctl show -P FragmentPath "$UNIT")"
+  [[ -n "$unit_path" && -f "$unit_path" ]] || die "找不到 $UNIT 的 unit 文件"
+
+  local has_logging=0
+  grep -qxF 'agent.access' "$ROOT/backend/app/core/logging.py" 2>/dev/null && has_logging=1
+
+  if [[ "$has_logging" == "1" ]]; then
+    local missing=() line
+    for line in "${UNIT_REQUIRED_LINES[@]}"; do
+      awk -v s="$line" 'BEGIN{found=0} index($0,s) {found=1} END{exit !found}' "$unit_path"         || missing+=("$line")
+    done
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+    [[ "$new_code" == "1" ]] || die "线上 unit 缺日志配置，而这次回滚换上去的是旧代码，补了也没有进程读它"
+    # 与 release.sh 同一份白名单：只对已知原文打补丁。
+    # 模板随发版同步进 $ROOT/deploy，回滚不改 deploy/，所以读的是线上这份。
+    [[ -f "$ROOT/deploy/agent-backend.service.template" ]]       || die "缺 $ROOT/deploy/agent-backend.service.template（无法核对 unit 原文）"
+    local expected expected_hash actual_hash
+    expected="$(sed "s#__ROOT__#${ROOT}#g" "$ROOT/deploy/agent-backend.service.template")"
+    expected_hash="$(printf '%s\n' "$expected" | sha256sum | awk '{print $1}')"
+    actual_hash="$(sha256sum "$unit_path" | awk '{print $1}')"
+    [[ "$actual_hash" == "$expected_hash" ]]       || die "$unit_path 既缺日志配置，又不是已知的原文（sha256=${actual_hash}）。拒绝自动改，请人工核对"
+    log "unit 缺日志配置，按白名单补上"
+  else
+    awk 'BEGIN{found=0} index($0,"--no-access-log") {found=1} END{exit !found}' "$unit_path" || return 0
+    log "回滚目标没有日志内核，去掉 --no-access-log（旧代码只靠 uvicorn 访问日志）"
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  if [[ "$has_logging" == "1" ]]; then
+    awk '
+      /^EnvironmentFile=/ && !done_env { print; print "EnvironmentFile=-/opt/agent-backend/.version"; done_env=1; next }
+      /^ExecStart=/ { print $0 " --no-access-log"; next }
+      /^Restart=always$/ { print; print "SyslogIdentifier=agent-backend"; next }
+      { print }
+    ' "$unit_path" > "$tmp"
+  else
+    grep -vxF -- '--no-access-log' "$unit_path" \
+      | sed 's/ --no-access-log$//' > "$tmp"
+  fi
+
+  if [[ "$has_logging" == "1" ]]; then
+    local l
+    for l in "${UNIT_REQUIRED_LINES[@]}"; do
+      awk -v s="$l" 'BEGIN{found=0} index($0,s) {found=1} END{exit !found}' "$tmp"         || die "补丁没有写入 ${l}（回滚中止，未改 unit）"
+    done
+    local delta
+    delta="$(diff "$unit_path" "$tmp" | grep -c '^>' || true)"
+    [[ "$delta" == "3" ]] || die "补丁改动了预期之外的行（$delta 行，应为 3 行）"
+  else
+    grep -q -- '--no-access-log' "$tmp" && die "补丁没有去掉 --no-access-log"
+  fi
+
+  cp -a "$unit_path" "${unit_path}.bak-$(date +%Y%m%d-%H%M%S)"
+  cat "$tmp" > "$unit_path"
+  rm -f "$tmp"
+  systemctl daemon-reload || die "daemon-reload 失败（unit 已改、备份在 ${unit_path}.bak-*，回滚中止）"
+  systemctl cat "$UNIT" >/dev/null 2>&1 || die "daemon-reload 之后 unit 解析失败"
+  log "unit 已收敛并 daemon-reload"
 }
 
 # 按 mtime 新到旧列出 releases/ 下的快照目录。
@@ -197,6 +272,10 @@ rsync -a --checksum --delete "$SNAP/dist/" "$ROOT/frontend/dist/"
 
 log "清理 __pycache__"
 find "$ROOT/backend" -type d -name '__pycache__' -prune -exec rm -rf {} +
+
+# 换上去的代码已在磁盘上，按它收敛 unit。旧快照没有日志内核时，
+# 这里会把 --no-access-log 拿掉，否则旧代码连 uvicorn 访问日志都没有。
+ensure_unit 0
 
 # 与 release.sh 同一份文件、同一条时序：重启前写，写失败中止。
 # 退回去的进程记的是目标 SHA，不是退之前的那一版。
