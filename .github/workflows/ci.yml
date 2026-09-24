@@ -32,6 +32,34 @@ jobs:
           python-version: "3.10"
       - run: python -m pip install --upgrade pip
       - run: pip install ruff -r backend/requirements.lock
+      - name: 锁的每个版本都能从生产镜像装到
+        # 生产 pip 只看得见 mirrors.cloud.aliyuncs.com，公网这份与它内容一致。
+        # 锁对着公网 PyPI 解析时，镜像没同步到的版本会让发版停在 pip，
+        # 而代码已经落地（2026-09-24 的 mako==1.4.3）。这里在合并前拦住。
+        run: |
+          python3 - <<'CHECK'
+          import re, sys, urllib.request
+          from pathlib import Path
+          missing = []
+          for line in Path("backend/requirements.lock").read_text().splitlines():
+              m = re.match(r"^([A-Za-z0-9_.-]+)==([^\s]+)$", line)
+              if not m:
+                  continue
+              name, ver = m.groups()
+              norm = re.sub(r"[-_.]+", "-", name).lower()
+              url = f"https://mirrors.aliyun.com/pypi/simple/{norm}/"
+              try:
+                  page = urllib.request.urlopen(url, timeout=30).read().decode("utf-8", "replace")
+              except Exception as exc:
+                  missing.append(f"{name}=={ver}（页面取不到: {exc}）")
+                  continue
+              if not re.search(re.escape(name).replace(r"\-", "[-_]") + "-" + re.escape(ver) + r"[-.]",
+                               page, re.IGNORECASE):
+                  missing.append(f"{name}=={ver}")
+          if missing:
+              sys.exit("生产镜像没有这些版本:\n" + "\n".join(missing))
+          print("锁内版本全部可从镜像装到")
+          CHECK
       - name: ruff（必须在 backend/ 下，否则吃不到 pyproject.toml）
         working-directory: backend
         run: ruff check .

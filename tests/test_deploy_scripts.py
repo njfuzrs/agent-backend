@@ -515,7 +515,10 @@ def test_no_var_glued_to_fullwidth_char():
     也就是修好 peer auth 之后它仍然跑不到打印摘要那一步。cron 的 locale 不由脚本掌握，
     所以只能在源码里杜绝：变量紧跟非 ASCII 字符时必须写 ${name}。
     """
-    pat = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7f])")
+    # 变量与全角字符之间隔着引号同样会被吞：die "写入 $l（..." 里的 $l 在
+    # zh_CN.UTF-8 下报 l<EF>: unbound variable。所以非 ASCII 前面允许穿一串
+    # 引号、反斜杠这类本身就能出现在变量名与文字之间的 ASCII 符号。
+    pat = re.compile(r"(?<!\{)\$[A-Za-z_][A-Za-z0-9_]*(?=[\'\"]?[^\x00-\x7f])")
     out = subprocess.check_output(["git", "ls-files", "*.sh"], cwd=REPO, text=True)
     scanned = 0
     offenders = []
@@ -629,11 +632,45 @@ def test_release_installs_from_lock_not_ranges():
     """
     text = (DEPLOY / "release.sh").read_text(encoding="utf-8")
     body = _command_body(text)
-    assert '$ROOT/backend/requirements.lock' in body
+    # 装暂存目录里的锁，且在 rsync_app 之前。装的是 $ROOT 里那份的话，
+    # 依赖装不上时代码已经落地：2026-09-24 mako==1.4.3 装失败，
+    # 磁盘是新代码、进程是旧的，Restart=always 会让一次崩溃静默切过去。
+    assert '"$SOURCE/backend/requirements.lock"' in body
+    # 函数定义在调用之前，比首次出现没意义，锚定到真正的调用行。
+    assert body.index("pip3 install") < body.index("\nrsync_app\n")
     # 范围文件可以同步进 $ROOT 留一份给人看，但不能再被拿去安装。
     assert "pip3 install" in body and "requirements.txt" not in body.split("pip3 install", 1)[1]
-    # 锁没同步上去就装，等于发版时才发现缺文件。
+    # 锁文件不存在就装，等于发版时才发现缺文件。
     assert "requirements.lock" in text.split("pip3 install")[0]
+
+
+def test_release_converges_unit_before_touching_code():
+    """发版只按白名单补 unit 的三处日志配置，且在改代码之前。
+
+    unit 缺 EnvironmentFile=-$ROOT/.version 时 version 恒为 unknown，缺
+    --no-access-log 时 uvicorn 文本行把 jq 噎住。整文件覆盖不行：仓里的参考
+    unit 写的是 /opt/trajectory-platform 加 venv，生产没有 venv。
+    对不上已知原文就拒绝，所以模板要随发版带上，比对在 rsync_app 之前。
+    """
+    text = (DEPLOY / "release.sh").read_text(encoding="utf-8")
+    body = _command_body(text)
+    for line in (
+        "EnvironmentFile=-/opt/agent-backend/.version",
+        "SyslogIdentifier=agent-backend",
+        "--no-access-log",
+    ):
+        assert line in text, line
+    assert "agent-backend.service.template" in body
+    assert "sha256sum" in body
+    # 补丁被拒绝时代码还没动：ensure_unit 必须在 rsync_app 调用之前。
+    assert body.index("ensure_unit") < body.index("\nrsync_app\n")
+    # 只补这三处。diff 计数是唯一的护栏，删掉它补丁就能改任意行。
+    assert '[[ "$delta" == "3" ]]' in body
+    # 回滚也要收敛：退回旧代码时 --no-access-log 会把旧版唯一的访问日志关掉。
+    rollback = _command_body((DEPLOY / "rollback.sh").read_text(encoding="utf-8"))
+    assert "ensure_unit" in rollback
+    assert "--no-access-log" in rollback
+    assert "sha256sum" in rollback
 
 
 def test_ci_installs_from_lock():
@@ -655,9 +692,13 @@ def test_lock_matches_requirements(tmp_path: Path):
     expected = tmp_path / "requirements.lock"
     # 在 backend/ 下解析，和生成锁时的工作目录一致。uv 的 via 注释写的是
     # 传给它的路径，目录不同注释就不同，比对会变成假红。
+    # 索引必须是阿里云镜像，与生产一致。对着公网 PyPI 解析的锁在生产装不上：
+    # 2026-09-24 mako==1.4.3 在 mirrors.cloud.aliyuncs.com 不存在，发版停在 pip。
+    # 公网 mirrors.aliyun.com 与内网那份内容一致，CI 又连不上内网，所以锁对着公网这份解析。
     r = _run(
         [
             "uv", "pip", "compile", "requirements.txt",
+            "--index-url", "https://mirrors.aliyun.com/pypi/simple/",
             "--python-version", "3.10",
             "--python-platform", "x86_64-manylinux_2_28",
             "-o", str(expected),

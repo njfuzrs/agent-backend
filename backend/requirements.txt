@@ -1,8 +1,13 @@
 # 这里只写范围。真正安装的版本在 requirements.lock，CI 和发版都装那一份，
 # 不装这一份——范围约束会让 CI、本地、生产各装到不同版本（FastAPI 0.137 改了
 # 路由树的形状，访问日志的 route 因此在 CI 上全变成 "-"）。
-# 改了下面的范围之后重生成锁：
-#   uv pip compile requirements.txt --python-version 3.10 --universal -o requirements.lock
+# 改了下面的范围之后重生成锁。索引必须用阿里云镜像，不能用公网 PyPI：
+# 锁对着所有消费方里最窄的索引解析，装的时候才处处成立。生产 pip 只看得见
+# mirrors.cloud.aliyuncs.com，而公网 mirrors.aliyun.com 与它内容一致、本机又连得上，
+# 所以锁在本机对着公网这份解析。2026-09-24 对着公网 PyPI 解析的锁在生产装到
+# mako==1.4.3 就失败，发版停在 pip，代码已落地、进程没换（见 release.sh 的顺序）。
+#   uv pip compile requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/ \
+#     --python-version 3.10 --python-platform x86_64-manylinux_2_28 -o requirements.lock
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 sqlalchemy>=2.0.0

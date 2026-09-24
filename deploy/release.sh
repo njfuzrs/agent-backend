@@ -5,7 +5,9 @@
 # 退出码：0 成功；非 0 失败（调用方 GitHub job / push_code.sh 失败）
 #
 # 硬约束（合入 main 自动部署设计 §6.1 / 生产目录文 §9）：
-#   - 不 mv /opt、不改 nginx、不覆盖 /etc/systemd/system/*.service
+#   - 不 mv /opt、不改 nginx
+#   - unit 只按白名单补三处日志配置（见 ensure_unit），其余一个字节不动：
+#     路径、ExecStart 解释器、凭据文件都不属于发版脚本
 #   - 不读、不传、不改业务凭据；rsync 排除 .env
 #   - $ROOT 读 AGENT_BACKEND_ROOT（未设：/opt/agent-backend 存在则用之，否则 /opt/trajectory-platform）
 #   - systemctl 优先 agent-backend，不存在再 trajectory-platform
@@ -250,10 +252,76 @@ rsync_app() {
       cp -a "$SOURCE/backend/$f" "$ROOT/backend/$f"
     fi
   done
-  # deploy/ 整目录同步，但不 --delete，也不把仓内 unit 拷到 /etc
+  # deploy/ 整目录同步，但不 --delete。unit 的收敛不靠整文件覆盖，见 ensure_unit。
   mkdir -p "$ROOT/deploy"
-  # 仓内 unit 只当参考，rsync 进 $ROOT/deploy 无妨；禁止 copy 到 /etc。
   rsync -a "$SOURCE/deploy/" "$ROOT/deploy/"
+}
+
+# 线上 unit 必须具备的三处日志配置（日志方案 §3.13）。
+# 缺任何一处，journalctl -o cat | jq 都过不了：没有 EnvironmentFile=-$ROOT/.version
+# 则 version 恒为 unknown；没有 --no-access-log 则 uvicorn 文本行把 jq 噎住；
+# 没有 SyslogIdentifier 则与机器上其他服务混在一起。
+#
+# 只补这三处，不整文件覆盖。unit 里还有路径、解释器、凭据文件，那些是机器
+# 自己的状态（切流后是 /opt/agent-backend + /usr/bin/python3，仓里那份参考 unit
+# 写的是 /opt/trajectory-platform + venv），整份拷过去会把一台正常的机器改坏。
+# 三处都在就直接返回，所以重复发版是空操作，不会每版都 daemon-reload。
+# --no-access-log 追加在 ExecStart 行尾，检测按子串而不是整行。
+UNIT_REQUIRED_LINES=(
+  'EnvironmentFile=-/opt/agent-backend/.version'
+  'SyslogIdentifier=agent-backend'
+  # --no-access-log 追加在 ExecStart 行尾，不是独立一行，所以这里只写标记本身。
+  '--no-access-log'
+)
+
+ensure_unit() {
+  local unit_path
+  unit_path="$(systemctl show -P FragmentPath "$UNIT")"
+  [[ -n "$unit_path" && -f "$unit_path" ]] || die "找不到 $UNIT 的 unit 文件"
+
+  # grep -F 在 macOS 上会把以 - 开头的行当成选项，所以精确行匹配走 awk。
+  local missing=() line
+  for line in "${UNIT_REQUIRED_LINES[@]}"; do
+    awk -v s="$line" 'BEGIN{found=0} index($0,s) {found=1} END{exit !found}' "$unit_path"       || missing+=("$line")
+  done
+  [[ ${#missing[@]} -eq 0 ]] && return 0
+
+  # 白名单比对的是仓里的模板按 $ROOT 渲染出来的原文（2026-09-25 从生产抄下）。
+  # 模板本身不含注释：它要与 /etc 里的 unit 逐字节一致，注释写在这里。
+  # 对不上说明 unit 被人改过，拒绝猜测，交人工处理，
+  # 不要在发版中途改一份看不懂的 unit。
+  local expected expected_hash actual_hash
+  [[ -f "$SOURCE/deploy/agent-backend.service.template" ]]     || die "缺 $SOURCE/deploy/agent-backend.service.template（无法核对 unit 原文）"
+  expected="$(sed "s#__ROOT__#${ROOT}#g" "$SOURCE/deploy/agent-backend.service.template")"
+  expected_hash="$(printf '%s\n' "$expected" | sha256sum | awk '{print $1}')"
+  actual_hash="$(sha256sum "$unit_path" | awk '{print $1}')"
+  [[ "$actual_hash" == "$expected_hash" ]]     || die "$unit_path 既缺日志配置，又不是已知的原文（sha256=${actual_hash}）。拒绝自动改，请人工核对"
+
+  local tmp
+  tmp="$(mktemp)"
+  awk '
+    /^EnvironmentFile=/ && !done_env { print; print "EnvironmentFile=-/opt/agent-backend/.version"; done_env=1; next }
+    /^ExecStart=/ { print $0 " --no-access-log"; next }
+    /^Restart=always$/ { print; print "SyslogIdentifier=agent-backend"; next }
+    { print }
+  ' "$unit_path" > "$tmp"
+
+  local l
+  for l in "${UNIT_REQUIRED_LINES[@]}"; do
+    awk -v s="$l" 'BEGIN{found=0} index($0,s) {found=1} END{exit !found}' "$tmp"       || die "补丁没有写入 ${l}（发版中止，未改 unit）"
+  done
+  # 只许多出这三行。多改了别的就说明 awk 规则写错了。
+  local delta
+  delta="$(diff "$unit_path" "$tmp" | grep -c '^>' || true)"
+  [[ "$delta" == "3" ]] || die "补丁改动了预期之外的行（$delta 行，应为 3 行）"
+
+  cp -a "$unit_path" "${unit_path}.bak-$(date +%Y%m%d-%H%M%S)"
+  cat "$tmp" > "$unit_path"
+  rm -f "$tmp"
+  systemctl daemon-reload     || die "daemon-reload 失败（unit 已改、备份在 ${unit_path}.bak-*，发版中止）"
+  # 重新解析后三行必须还在：daemon-reload 报错不一定非 0，但 unit 坏了后续 restart 会起不来。
+  systemctl cat "$UNIT" >/dev/null 2>&1 || die "daemon-reload 之后 unit 解析失败"
+  log "已为 $UNIT 补上 .version / SyslogIdentifier / --no-access-log，并 daemon-reload"
 }
 
 # 先快照即将被覆盖的这一份：没有它，第一次回滚无处可退。
@@ -266,6 +334,17 @@ if [[ -n "$PREV_SHA" && ! -d "$RELEASES/$PREV_SHA/backend-app" ]]; then
   snapshot_tree "$PREV_SHA" "$LIVE_REV" \
     || log "快照 $PREV_SHA 失败（继续发版）：回滚将没有这一份"
 fi
+
+# 依赖必须在改任何代码之前装。2026-09-24 的发版在 rsync 之后才 pip，
+# mako==1.4.3 在镜像上不存在，结果磁盘已是新代码、进程还是旧的，
+# 而 Restart=always 会让一次崩溃把没走完的发版静默切成线上版本。
+# 装的是暂存目录里的锁：装失败时 $ROOT 一个字节都没动。
+[[ -f "$SOURCE/backend/requirements.lock" ]] || die "缺 $SOURCE/backend/requirements.lock"
+log "pip3 install -r requirements.lock（改代码之前）"
+pip3 install -q -r "$SOURCE/backend/requirements.lock"   || die "依赖安装失败（发版中止：代码未改动）"
+
+# unit 也在改代码之前收敛：补丁被白名单拒绝时，$ROOT 同样一个字节都没动。
+ensure_unit
 
 log "同步代码 → $ROOT"
 rsync_app
@@ -285,11 +364,6 @@ done
 if [[ ! -f "$ROOT/deploy/pg_env.sh" ]]; then
   log "警告: 缺 $ROOT/deploy/pg_env.sh，audit/cleanup/backup_pg 将无法运行"
 fi
-
-log "pip3 install -r requirements.lock"
-# 装锁而不是 requirements.txt。后者只有范围，每次发版都会浮到当时的最新版，
-# 和 CI、和上一台机器都可能不同。锁不在就直接失败，不退回范围文件。
-pip3 install -q -r "$ROOT/backend/requirements.lock"
 
 if [[ "$NEED_MIGRATE" == "1" ]]; then
   log "alembic upgrade head（cwd=$ROOT/backend）"

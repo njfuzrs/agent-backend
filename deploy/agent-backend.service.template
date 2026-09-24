@@ -1,0 +1,16 @@
+[Unit]
+Description=Agent Backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__ROOT__/backend
+EnvironmentFile=__ROOT__/.env
+ExecStart=/usr/bin/python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8900 --workers 2 --log-level info
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+Alias=trajectory-platform.service
