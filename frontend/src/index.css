@@ -24,3 +24,9 @@ body {
 .ant-layout-content {
   overflow-x: auto;
 }
+
+/* 成本页：已超限的生效预算行。切 block 时必须一眼看见「这行已经超了」，
+   否则会在已超限的情况下把 alert 改成 block，一保存就杀掉正在跑的会话。 */
+.cost-row-over > td {
+  background: #2a1215 !important;
+}
