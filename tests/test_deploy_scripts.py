@@ -996,6 +996,45 @@ def test_bridge_unit_is_single_worker_and_loopback_only():
     assert "app.modules.bridge.sidecar.main:app" in text
 
 
+def test_journald_retention_is_bounded():
+    """应用日志至少 14 天、不超过 30 天。这个上限写在 drop-in 里，不进发行版的 journald.conf。
+
+    30 天是上限：journald 是整机的，不设就会一直积到磁盘策略自己决定删，
+    线上曾经积到半年。取 30 而不是 14，下限仍然满足，少删无关的系统日志。
+    """
+    text = (DEPLOY / "journald-agent-backend.conf").read_text(encoding="utf-8")
+    body = _command_body(text)
+    assert "SystemMaxRetentionSec=30day" in body
+    assert "SystemMaxUse=1G" in body
+    # 不能写进本体。发版与本脚本都只许动 drop-in。
+    script = (DEPLOY / "ensure_journald.sh").read_text(encoding="utf-8")
+    commands = _command_body(script)
+    assert "/etc/systemd/journald.conf.d" in commands
+    assert "agent-backend.conf" in script
+    assert "systemd-journald" in commands
+    assert "journalctl --vacuum-time=30d" in commands
+    # 本体只允许出现在「不改它」的说明里，不能出现在写文件的命令里。
+    assert not any(
+        "/etc/systemd/journald.conf" in line and "journald.conf.d" not in line
+        for line in commands.splitlines()
+    )
+
+
+def test_resolve_unit_uses_fragment_not_alias():
+    """检索用的 unit 名必须是主名，不能是别名。
+
+    切流后 trajectory-platform.service 是 agent-backend.service 的 Alias。
+    systemctl cat 对别名返回 0，但 journalctl -u 别名是空的，
+    排障命令因此一条日志都看不到。
+    """
+    for name in ("release.sh", "rollback.sh"):
+        text = (DEPLOY / name).read_text(encoding="utf-8")
+        body = _command_body(text)
+        assert "systemctl show -P FragmentPath" in body, name
+        # 旧判断只看 cat 的退出码，别名也会命中。
+        assert "systemctl cat agent-backend.service" not in body, name
+
+
 def test_nginx_bridge_location_upgrades_separately():
     """WS 的 Upgrade 必须在自己的 location 里，不能加进现有的 /traj/api/。
 
@@ -1005,5 +1044,15 @@ def test_nginx_bridge_location_upgrades_separately():
     assert "location /traj/api/v1/bridge/ws" in text
     assert "proxy_set_header Upgrade $http_upgrade;" in text
     assert "127.0.0.1:8901" in text
-    api_block = text.split("location /traj/api/ {", 1)[1].split("#", 1)[0]
+    api_block = text.split("location /traj/api/ {", 1)[1].split("location = /traj/api/v1/ready", 1)[0]
     assert "Upgrade" not in api_block
+    # 公网反代必须把 nginx 的请求号传进应用，并写回响应。
+    # 缺了这两行，journald 里的 request_id 与 nginx access log 对不上。
+    assert "proxy_set_header X-Request-ID $request_id;" in api_block
+    assert "proxy_hide_header X-Request-ID;" in api_block
+    assert "add_header X-Request-ID $request_id always;" in api_block
+    # ready 只允许本机直连 8900。公网精确匹配必须盖住 /traj/api/ 前缀。
+    assert "location = /traj/api/v1/ready" in text
+    ready_block = text.split("location = /traj/api/v1/ready", 1)[1].split("location ", 1)[0]
+    assert "return 404;" in ready_block
+    assert "proxy_pass" not in ready_block

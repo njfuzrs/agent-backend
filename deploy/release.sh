@@ -42,12 +42,26 @@ resolve_root() {
 }
 
 # 优先新 unit；切流前线上只有 trajectory-platform。
+#
+# 必须解析出真正的 unit 名。trajectory-platform.service 在切流后只是
+# agent-backend.service 的 Alias，systemctl cat 对别名也返回 0，但
+# journalctl -u <别名> 是空的——日志都记在主名下。拿别名去排查等于没有日志。
 resolve_unit() {
-  if systemctl cat agent-backend.service >/dev/null 2>&1; then
+  local fragment
+  fragment="$(systemctl show -P FragmentPath agent-backend.service 2>/dev/null || true)"
+  if [[ -n "$fragment" && -f "$fragment" ]]; then
     printf '%s\n' agent-backend
-  else
-    printf '%s\n' trajectory-platform
+    return
   fi
+  fragment="$(systemctl show -P FragmentPath trajectory-platform.service 2>/dev/null || true)"
+  if [[ -n "$fragment" && -f "$fragment" ]]; then
+    # 别名的 FragmentPath 指向主 unit。用它的文件名，而不是调用时的那个名字。
+    local base
+    base="$(basename "$fragment")"
+    printf '%s\n' "${base%.service}"
+    return
+  fi
+  printf '%s\n' trajectory-platform
 }
 
 # 不 import 应用：SOURCE 没有 .env，env.py 会因为缺 AUTH_PASSWORD 直接 SystemExit。
