@@ -142,6 +142,8 @@ class BudgetAuditItem(BaseModel):
     reason: str = ""
     actor: str = ""
     created_at: str
+    # 跳回同一次请求的日志。旧行与脚本直接改库的行是 None。
+    request_id: Optional[str] = None
 
 
 class BudgetAuditListResponse(BaseModel):

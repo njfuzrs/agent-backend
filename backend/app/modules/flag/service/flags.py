@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import current_actor, current_request_id, get_logger
 from app.core.timeutil import utc_now_iso
 from app.modules.flag.model import FeatureFlag, FeatureFlagAudit
 from app.modules.flag.schemas import (
@@ -28,6 +29,8 @@ from app.modules.flag.schemas import (
     FlagUpsert,
 )
 from app.modules.flag.service.guard import validate_description, validate_key
+
+logger = get_logger("agent.flag")
 
 
 def _dumps(value: Any) -> str:
@@ -112,6 +115,7 @@ async def create_flag(db: AsyncSession, payload: FlagCreate, actor: str) -> Flag
         now_iso=now_iso,
     )
     await db.commit()
+    _admin_write("create", key)
     return _to_item(flag)
 
 
@@ -142,6 +146,7 @@ async def update_flag(db: AsyncSession, key: str, payload: FlagUpsert, actor: st
         now_iso=now_iso,
     )
     await db.commit()
+    _admin_write("update", key)
     return _to_item(flag)
 
 
@@ -171,6 +176,7 @@ async def set_flag_enabled(
         now_iso=now_iso,
     )
     await db.commit()
+    _admin_write("enable" if enabled else "disable", key)
     return _to_item(flag)
 
 
@@ -199,6 +205,7 @@ async def delete_flag(db: AsyncSession, key: str, actor: str, reason: str = "") 
     await db.flush()
     await db.delete(flag)
     await db.commit()
+    _admin_write("delete", key)
     return FlagDeleteResponse(key=key, deleted=True)
 
 
@@ -218,6 +225,7 @@ async def list_audit(db: AsyncSession, key: Optional[str] = None, limit: int = 1
                 reason=a.reason,
                 actor=a.actor,
                 created_at=a.created_at,
+                request_id=a.request_id,
             )
             for a in rows.scalars().all()
         ]
@@ -227,6 +235,20 @@ async def list_audit(db: AsyncSession, key: Optional[str] = None, limit: int = 1
 # ---------------------------------------------------------------------------
 # 内部
 # ---------------------------------------------------------------------------
+def _admin_write(action: str, target_id: str) -> None:
+    """管理台写操作完成一条。actor 从上下文取，与审计行同一值（方案 §3.6、§3.9）。
+
+    reason 不进日志，它在审计表里。提交失败时到不了这里，那一条归兜底。
+    """
+    logger.info(
+        "admin write",
+        event="admin_write",
+        action=action,
+        target_id=target_id,
+        actor=current_actor(),
+    )
+
+
 def _audit(
     db: AsyncSession,
     *,
@@ -249,6 +271,8 @@ def _audit(
             reason=reason or "",
             actor=actor or "",
             created_at=now_iso,
+            # 取不到就留空。不为没有请求的写入编造编号（方案 §3.9）。
+            request_id=current_request_id(),
         )
     )
 

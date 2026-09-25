@@ -5,10 +5,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.core.timeutil import is_expired, iso_after, utc_now_iso
 from app.modules.identity.model import Device, DeviceCredential, EnrollCode, Organization, Team
 from app.modules.identity.schemas import EnrollRequest, EnrollResponse
 from app.modules.identity.service.secrets import hash_secret, mint_credential
+
+logger = get_logger("agent.identity")
 
 
 async def enroll_device(db: AsyncSession, raw_token: str, payload: EnrollRequest) -> EnrollResponse:
@@ -80,6 +83,15 @@ async def enroll_device(db: AsyncSession, raw_token: str, payload: EnrollRequest
         )
     )
     await db.commit()
+
+    # 成功才记。失败走路由层的 agent.auth（reason=enroll_rejected），不在这里记。
+    # 不记码、不记凭据明文：这两样都是密钥，日志只留设备与组织。
+    logger.info(
+        "device enrolled",
+        event="device_enrolled",
+        device_id=device.device_id,
+        org_id=org.org_id,
+    )
 
     return EnrollResponse(
         credential=plaintext,

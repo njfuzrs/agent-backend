@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth.control_plane import DeviceContext
+from app.core.logging import current_actor, current_request_id, get_logger
 from app.core.timeutil import utc_now_iso
 from app.modules.identity.service import admin as identity_admin
 from app.modules.policy.model import Policy, PolicyAudit
@@ -37,6 +38,8 @@ from app.modules.policy.schemas import (
     PolicyUpdate,
 )
 from app.modules.policy.service.guard import validate_settings
+
+logger = get_logger("agent.policy")
 
 
 def _dumps(value: Any) -> str:
@@ -180,6 +183,7 @@ async def create_policy(db: AsyncSession, payload: PolicyCreate, actor: str) -> 
         now_iso=now_iso,
     )
     await db.commit()
+    _admin_write("create", str(policy.id))
     return _to_item(policy)
 
 
@@ -206,6 +210,7 @@ async def update_policy(db: AsyncSession, policy_id: int, payload: PolicyUpdate,
         now_iso=now_iso,
     )
     await db.commit()
+    _admin_write("update", str(policy.id))
     return _to_item(policy)
 
 
@@ -243,6 +248,7 @@ async def set_policy_enabled(
         now_iso=now_iso,
     )
     await db.commit()
+    _admin_write("enable" if enabled else "disable", str(policy.id))
     return _to_item(policy)
 
 
@@ -266,6 +272,7 @@ async def delete_policy(db: AsyncSession, policy_id: int, actor: str, reason: st
     await db.flush()
     await db.delete(policy)
     await db.commit()
+    _admin_write("delete", str(policy_id))
     return PolicyDeleteResponse(id=policy_id, deleted=True)
 
 
@@ -291,6 +298,7 @@ async def list_audit(
                 reason=a.reason,
                 actor=a.actor,
                 created_at=a.created_at,
+                request_id=a.request_id,
             )
             for a in rows.scalars().all()
         ]
@@ -360,6 +368,20 @@ async def _require(db: AsyncSession, policy_id: int) -> Policy:
     return policy
 
 
+def _admin_write(action: str, target_id: str) -> None:
+    """管理台写操作完成一条。actor 从上下文取，与审计行同一值（方案 §3.6、§3.9）。
+
+    reason 不进日志，它在审计表里。提交失败时到不了这里，那一条归兜底。
+    """
+    logger.info(
+        "admin write",
+        event="admin_write",
+        action=action,
+        target_id=target_id,
+        actor=current_actor(),
+    )
+
+
 def _audit(
     db: AsyncSession,
     *,
@@ -384,6 +406,8 @@ def _audit(
             reason=reason,
             actor=actor or "",
             created_at=now_iso,
+            # 取不到就留空。不为没有请求的写入编造编号（方案 §3.9）。
+            request_id=current_request_id(),
         )
     )
 

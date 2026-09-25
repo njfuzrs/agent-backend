@@ -759,6 +759,8 @@ def test_deploy_yml_contract():
     # M5：两条新通道的冒烟必须在。删掉等于「漏挂鉴权上线也不会红」。
     assert "/api/v1/ctl/budget" in text
     assert "/api/v1/usage/ledger" in text
+    # ready 只打本机：证明数据库，不进公网断言，也不替换 health（日志方案 §8）。
+    assert "127.0.0.1:8900/api/v1/ready" in text
     assert "121.196.144.227" not in text
     # 2026-09-22 起 IP 明文必须 410，不能再当 200 救生通道
     assert 'test "$ip_code" = 410' in text
@@ -953,3 +955,5 @@ def test_deploy_yml_rollback_job():
     # 回滚后仍要冒烟，且 IP 明文仍是 410
     assert 'test "$ip_code" = 410' in rollback_block
     assert "https://www.sid-code.cc/traj" in rollback_block
+    # ready 只打本机，不进公网那组断言
+    assert "127.0.0.1:8900/api/v1/ready" in rollback_block

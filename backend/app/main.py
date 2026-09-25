@@ -16,6 +16,7 @@ from app.core import db as db_mod
 from app.core.config import settings
 from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging, get_logger
+from app.core.ready import router as ready_router
 
 # 必须在业务路由 import 之前配置。那些模块的 logger 若在配置前被创建，
 # 会沿用上次进程或测试留下的 handler，表现为「本地偶现没日志」（方案 §5）。
@@ -98,6 +99,8 @@ install_exception_handlers(app)
 
 # ---- 平台内核：管理台会话（凭据不进 localStorage，见 §PR-0.5）----
 app.include_router(auth.router, prefix="/api/v1")
+# 就绪检查。不进冻结区、不挂鉴权、不探 OSS（方案 §3.8）。
+app.include_router(ready_router, prefix="/api/v1")
 
 # ---- 数据面：事实从客户端流出 ----
 app.include_router(upload.router, prefix="/api/v1")

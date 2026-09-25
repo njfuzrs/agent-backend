@@ -36,7 +36,8 @@ _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 # 永远成功、只有心跳意义的路由。只在 2xx 时跳过，非 2xx 照记——
 # 跳过规则把失败也吞掉，就退回「出事只能靠客户端状态码倒推」。
 # 用路由模板而不是真实路径：真实路径的基数等于 session 数，无法枚举。
-QUIET_ROUTES = ("/api/v1/health",)
+# ready 的失败另有一条 error（event=ready_failed），访问日志照记，不靠这里。
+QUIET_ROUTES = ("/api/v1/health", "/api/v1/ready")
 
 # 轮询接口。量大，但失败恰恰要看见，所以不丢弃，用级别解决（方案 §3.4）：
 # 快速 2xx 降到 debug（默认 info 下不输出），慢或失败照记。

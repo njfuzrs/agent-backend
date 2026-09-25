@@ -276,6 +276,8 @@ jobs:
 
           SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
           "${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" 'curl -fsS --max-time 10 http://127.0.0.1:8900/api/v1/health'
+          # ready 只打本机：它证明数据库，不进公网断言，也不替换 health（方案 §8）。
+          "${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" 'curl -fsS --max-time 10 http://127.0.0.1:8900/api/v1/ready'
           echo "smoke https ok SHA=$SHA"
 
       - name: 可选 SMOKE_BASIC（登录后列表）
@@ -426,5 +428,9 @@ jobs:
           ip_code="$(curl -sS --max-time 20 --max-redirs 0 -o /tmp/smoke-ip -w '%{http_code}' "http://${DEPLOY_HOST}/traj/api/v1/health")"
           echo "IP health $ip_code"
           test "$ip_code" = 410
+
+          # ready 只打本机：它证明数据库，不进公网断言，也不替换 health（方案 §8）。
+          SSH=(ssh -i "$HOME/.ssh/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          "${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" 'curl -fsS --max-time 10 http://127.0.0.1:8900/api/v1/ready'
 
           echo "rollback smoke ok TO_SHA=$TO_SHA"

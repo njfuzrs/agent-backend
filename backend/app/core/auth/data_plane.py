@@ -26,7 +26,7 @@ logger = get_logger("agent.auth")
 security = HTTPBasic(auto_error=False)
 
 
-def verify_basic_auth(
+async def verify_basic_auth(
     request: Request,
     credentials: Optional[HTTPBasicCredentials] = Depends(security),
 ):
@@ -38,6 +38,9 @@ def verify_basic_auth(
     保留 Basic 是刻意的：`tests/test_*.py` 五个脚本与运维 curl 都在用它，
     砍掉会让「现有 e2e 全绿」这条 M0 出口检查失效。
     去掉的只是「前端把密码存进 localStorage」这一件事。
+
+    必须是异步的。同步依赖被 FastAPI 丢进线程池，contextvar 不跨线程，
+    这里写的 actor 与 auth 在访问日志里会读不到（方案 §3.4）。
     """
     session_user = read_session(request)
     if session_user:
@@ -59,8 +62,12 @@ def verify_basic_auth(
     _reject("basic_rejected", basic=True)
 
 
-def verify_upload_token(request: Request):
-    """上传端认证：X-Upload-Token Header"""
+async def verify_upload_token(request: Request):
+    """上传端认证：X-Upload-Token Header。
+
+    异步的原因与 verify_basic_auth 相同：同步依赖里写的 auth 进不了访问日志。
+    鉴权行为不变，仍是冻结区的那一个比对。
+    """
     token = request.headers.get("X-Upload-Token", "")
     if not secrets.compare_digest(token, settings.UPLOAD_TOKEN):
         # 头缺失与头不对同一个 reason：upload token 没有两种处置。

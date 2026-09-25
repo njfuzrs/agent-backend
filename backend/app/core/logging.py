@@ -157,6 +157,23 @@ def context_value(key: str) -> Any:
     return current.get(key)
 
 
+def current_request_id() -> Optional[str]:
+    """当前请求的编号。没有请求（脚本直接改库、启动检查）时返回 None。
+
+    审计行用它：取不到就留空列，不为没有请求的写入编造编号（方案 §3.9）。
+    """
+    value = context_value("request_id")
+    return value or None
+
+
+def current_actor() -> str:
+    """当前请求的操作者。与审计表 actor 列是同一个值：会话用户名（方案 §3.9）。
+
+    调用点不传。没经过鉴权（脚本直接改库）时是空串，与审计行 actor 的默认值一致。
+    """
+    return context_value("actor") or ""
+
+
 # ---- 记录器 ---------------------------------------------------------------------
 
 
