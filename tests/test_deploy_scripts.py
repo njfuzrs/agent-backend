@@ -957,3 +957,53 @@ def test_deploy_yml_rollback_job():
     assert "https://www.sid-code.cc/traj" in rollback_block
     # ready 只打本机，不进公网那组断言
     assert "127.0.0.1:8900/api/v1/ready" in rollback_block
+
+
+def test_release_restarts_bridge_only_when_installed():
+    """发版必须重启中继，否则它继续跑旧字节；但没装这个 unit 不能挡住主应用。
+
+    M6 是按需的。unit 不存在就警告跳过，存在则重启并探活。
+    探活失败只警告：中继起不来不该让一次已经健康的主应用发版判红。
+    """
+    text = (DEPLOY / "release.sh").read_text(encoding="utf-8")
+    body = _command_body(text)
+    assert 'BRIDGE_UNIT="agent-backend-bridge.service"' in body
+    assert 'systemctl restart "$BRIDGE_UNIT"' in body
+    assert "http://127.0.0.1:8901/health" in body
+    # 重启必须在主应用 health 通过之后。
+    assert body.index("127.0.0.1:8900/api/v1/health") < body.index('systemctl restart "$BRIDGE_UNIT"')
+    # 没装就跳过，不因为中继缺失让发版失败。
+    assert 'systemctl cat "$BRIDGE_UNIT"' in body
+    # 取中继重启到下一段之间的命令。中继 health 失败只警告，不 die。
+    restart_block = body.split('systemctl restart "$BRIDGE_UNIT"', 1)[1]
+    restart_block = restart_block.split("未安装", 1)[0]
+    assert "die " not in restart_block
+
+
+def test_bridge_unit_is_single_worker_and_loopback_only():
+    """中继 unit 必须 --workers 1 且只绑回环。
+
+    workers 2 是配对静默裂开的原因；绑 0.0.0.0 会绕过 nginx 的 wss。
+    """
+    text = (DEPLOY / "agent-backend-bridge.service").read_text(encoding="utf-8")
+    commands = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "--workers 1" in commands
+    assert "--workers 2" not in commands
+    assert "--host 127.0.0.1" in text
+    assert "--port 8901" in text
+    assert "app.modules.bridge.sidecar.main:app" in text
+
+
+def test_nginx_bridge_location_upgrades_separately():
+    """WS 的 Upgrade 必须在自己的 location 里，不能加进现有的 /traj/api/。
+
+    整段加上会让所有 API 都带 Connection: upgrade。
+    """
+    text = (DEPLOY / "nginx.conf").read_text(encoding="utf-8")
+    assert "location /traj/api/v1/bridge/ws" in text
+    assert "proxy_set_header Upgrade $http_upgrade;" in text
+    assert "127.0.0.1:8901" in text
+    api_block = text.split("location /traj/api/ {", 1)[1].split("#", 1)[0]
+    assert "Upgrade" not in api_block

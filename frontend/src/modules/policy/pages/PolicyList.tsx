@@ -90,6 +90,7 @@ function settingsSummary(settings: PolicySettings): string {
   if (settings.disableBypassPermissionsMode === 'disable') bits.push('禁 bypass')
   if (settings.disabledModes?.length) bits.push(`模式 ${settings.disabledModes.join('/')}`)
   if (settings.strictPluginOnlyCustomization) bits.push('锁定定制化')
+  if (settings.bridgeEnabled === false) bits.push('禁止遥控')
   return bits.join(' · ') || '（无摘要）'
 }
 
@@ -109,6 +110,7 @@ type FormValues = {
   disabledModes?: string[]
   strictAll?: boolean
   strictSurfaces?: string[]
+  bridgeDisabled?: boolean
   reason: string
 }
 
@@ -141,6 +143,7 @@ function toSettings(values: FormValues): PolicySettings {
   if (values.disabledModes?.length) settings.disabledModes = values.disabledModes
   if (values.strictAll) settings.strictPluginOnlyCustomization = true
   else if (values.strictSurfaces?.length) settings.strictPluginOnlyCustomization = values.strictSurfaces
+  if (values.bridgeDisabled) settings.bridgeEnabled = false
   return settings
 }
 
@@ -169,6 +172,7 @@ function fromItem(row: PolicyItem): FormValues {
     disabledModes: row.settings.disabledModes ?? [],
     strictAll: strict === true,
     strictSurfaces: Array.isArray(strict) ? strict : [],
+    bridgeDisabled: row.settings.bridgeEnabled === false,
     reason: '',
   }
 }
@@ -580,6 +584,14 @@ export default function PolicyList() {
           </Form.Item>
           <Form.Item name="disabledModes" label="禁用的权限模式">
             <Select mode="tags" options={PERMISSION_MODES.map(m => ({ value: m, label: m }))} />
+          </Form.Item>
+          <Form.Item
+            name="bridgeDisabled"
+            label="禁止 Bridge 远程控制"
+            valuePropName="checked"
+            extra="关闭后该范围的客户端不再接受遥控。省略等于不关。"
+          >
+            <Switch />
           </Form.Item>
           <Form.Item name="strictAll" label="锁定全部定制化面" valuePropName="checked">
             <Switch />

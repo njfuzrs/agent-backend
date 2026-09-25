@@ -573,3 +573,68 @@ def test_device_org_id_overridden_by_real_org(client):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ---------------------------------------------------------------------------
+# bridgeEnabled：省略 = 不关；false 是一项约束；true 写入时丢掉
+# ---------------------------------------------------------------------------
+def test_bridge_disabled_alone_is_a_constraint_and_is_delivered(client):
+    """只关遥控也不是空策略。空 remote 会盖掉本地 managed，所以这一项必须算数。"""
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-bridge")
+    created = _create_policy(
+        client,
+        scope_type="org",
+        scope_id="corp-shanghai",
+        org_id="corp-shanghai",
+        settings={"bridgeEnabled": False},
+    )
+    assert created.status_code == 201, created.text
+
+    resp = _get_policy(client, cred)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"source": "remote", "bridgeEnabled": False}
+
+
+def test_bridge_enabled_true_is_not_a_constraint(client):
+    """true 与省略同义。单独写它等于空策略，必须 422。"""
+    _issue_code(client)
+    resp = _create_policy(
+        client,
+        scope_type="org",
+        scope_id="corp-shanghai",
+        org_id="corp-shanghai",
+        settings={"bridgeEnabled": True},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+def test_bridge_enabled_true_is_dropped_when_other_constraints_exist(client):
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-bridge-true")
+    created = _create_policy(
+        client,
+        scope_type="org",
+        scope_id="corp-shanghai",
+        org_id="corp-shanghai",
+        settings={"bridgeEnabled": True, "permissions": {"deny": ["Bash(curl *)"]}},
+    )
+    assert created.status_code == 201, created.text
+    assert "bridgeEnabled" not in created.json()["settings"]
+
+    resp = _get_policy(client, cred)
+    assert resp.status_code == 200, resp.text
+    assert "bridgeEnabled" not in resp.json()
+    assert resp.json()["permissions"]["deny"] == ["Bash(curl *)"]
+
+
+def test_bridge_enabled_must_be_bool(client):
+    _issue_code(client)
+    resp = _create_policy(
+        client,
+        scope_type="org",
+        scope_id="corp-shanghai",
+        org_id="corp-shanghai",
+        settings={"bridgeEnabled": "false"},
+    )
+    assert resp.status_code == 422, resp.text

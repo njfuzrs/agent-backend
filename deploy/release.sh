@@ -404,6 +404,29 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
 done
 [[ "$ok" == "1" ]] || die "http://127.0.0.1:8900/api/v1/health 连续失败"
 
+# 中继是另一个进程，发版换了 app/ 之后它还在跑旧字节。配对协议一变就全 4001。
+# 主服务健康之后才重启它：中继起不来不该挡住主应用，没装过这个 unit 也不该挡住。
+# M6 是按需的，unit 不存在就跳过。
+BRIDGE_UNIT="agent-backend-bridge.service"
+if systemctl cat "$BRIDGE_UNIT" >/dev/null 2>&1; then
+  log "重启 $BRIDGE_UNIT"
+  systemctl restart "$BRIDGE_UNIT"
+  bridge_ok=0
+  for i in 1 2 3 4 5; do
+    if curl -fsS http://127.0.0.1:8901/health >/dev/null; then
+      log "bridge health ok (attempt $i)"
+      bridge_ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$bridge_ok" != "1" ]]; then
+    log "警告: sidecar 重启后 health 失败，主应用已更新。看 journalctl -u $BRIDGE_UNIT"
+  fi
+else
+  log "警告: 未安装 ${BRIDGE_UNIT}，跳过中继重启（M6 按需，不影响本次发版）"
+fi
+
 # 2026-09-22 起 IP/未知 Host 的 :80 是整块 410。本机 curl 不带 Host
 # 会走 default_server，再打 http://127.0.0.1/traj/ 就是 410（#20 合入后
 # 第一次 Deploy 在这里红）。反代是否还在，问 HTTPS 域名块。

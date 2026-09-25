@@ -22,6 +22,7 @@ export type PolicySettings = {
   disabledModes?: string[]
   disableBypassPermissionsMode?: 'disable' | 'allow'
   strictPluginOnlyCustomization?: boolean | string[]
+  bridgeEnabled?: boolean
 }
 
 export type PolicyItem = {
