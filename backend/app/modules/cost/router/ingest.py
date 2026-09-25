@@ -19,18 +19,18 @@
 """
 
 import json
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth.control_plane import DeviceContext, require_device
 from app.core.db import get_db
+from app.core.logging import get_logger
 from app.modules.cost.schemas import UsageIngestResponse
 from app.modules.cost.service.guard import MAX_BODY_BYTES, BadLedger, parse_ledger_body
 from app.modules.cost.service.ingest import upsert_ledger
 
-logger = logging.getLogger("uvicorn.error")
+logger = get_logger("agent.cost")
 
 router = APIRouter(tags=["usage-ingest"])
 
@@ -50,9 +50,11 @@ async def post_usage_ledger(
     raw = await request.body()
     if len(raw) > MAX_BODY_BYTES:
         logger.warning(
-            "usage/ledger 上报超 body 上限: device=%s bytes=%d",
-            ctx.device_id,
-            len(raw),
+            "ledger rejected",
+            event="ledger_rejected",
+            reason="too_large",
+            device_id=ctx.device_id,
+            bytes_in=len(raw),
         )
         raise HTTPException(status_code=413, detail="payload too large")
 

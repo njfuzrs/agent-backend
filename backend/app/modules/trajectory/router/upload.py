@@ -13,11 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth.data_plane import verify_upload_token
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.logging import get_logger
 from app.modules.trajectory.model import Trajectory
 from app.modules.trajectory.schemas import UploadResponse
 from app.modules.trajectory.service.storage import compute_sha256, storage
 from app.modules.trajectory.service.tool_steps import sync_tool_steps
 from app.modules.trajectory.service.traj_parser import parse_traj_content
+
+logger = get_logger("agent.trajectory")
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -65,9 +68,16 @@ async def upload_session_file(
     if is_gzip:
         compressed = True
 
-    # SHA256 校验
+    # SHA256 校验。两端哈希都不进日志：哈希能反查内容（方案 §3.6）。
     server_hash = compute_sha256(content)
     if x_content_sha256 and server_hash != x_content_sha256:
+        logger.warning(
+            "upload rejected",
+            event="upload_rejected",
+            reason="checksum_mismatch",
+            session_id=session_id,
+            file_type=file_type,
+        )
         raise HTTPException(status_code=400, detail={
             "error": "hash_mismatch",
             "expected": x_content_sha256,
@@ -215,6 +225,8 @@ async def upload_batch(
     """批量上传 .traj 文件"""
     results = []
     for file in files:
+        # 解析得出才有。失败发生在那之前时日志里不带，不写空串。
+        session_id = ""
         try:
             content = await file.read()
             traj_data = json.loads(content)
@@ -252,8 +264,13 @@ async def upload_batch(
                 await sync_tool_steps(db, record, traj_data)
                 results.append({"session_id": session_id, "status": "created"})
 
-        except Exception as e:
-            results.append({"file": file.filename, "status": "error", "reason": str(e)})
+        except Exception as exc:
+            # reason 只回固定类别。str(exc) 里有解析器的原文，可能带轨迹内容。
+            fields = {"event": "upload_failed", "exc_type": type(exc).__name__}
+            if session_id:
+                fields["session_id"] = session_id
+            logger.error("upload failed", **fields)
+            results.append({"file": file.filename, "status": "error", "reason": "parse_error"})
 
     await db.commit()
     return {"total": len(files), "results": results}
@@ -301,8 +318,9 @@ async def reindex(db: AsyncSession = Depends(get_db)):
             await sync_tool_steps(db, record, json.loads(content))
             new += 1
             tool_steps_rebuilt += 1
-        except Exception:
+        except Exception as exc:
             errors += 1
+            _log_reindex_failure(traj_file, exc)
 
     # 旧布局兼容：traj_files/**/*.traj
     if DATA_DIR.exists():
@@ -335,8 +353,9 @@ async def reindex(db: AsyncSession = Depends(get_db)):
                 await sync_tool_steps(db, record, json.loads(content))
                 new += 1
                 tool_steps_rebuilt += 1
-            except Exception:
+            except Exception as exc:
                 errors += 1
+                _log_reindex_failure(traj_file, exc)
 
     await db.commit()
     return {
@@ -346,6 +365,25 @@ async def reindex(db: AsyncSession = Depends(get_db)):
         "errors": errors,
         "tool_steps_rebuilt": tool_steps_rebuilt,
     }
+
+
+def _log_reindex_failure(traj_file: Path, exc: Exception) -> None:
+    """单个文件解析失败。记路径与异常类名，不记文件内容。
+
+    路径相对 SESSIONS_DIR 的父目录（即 data/）。绝对路径会把部署目录带进日志，
+    而文件名本身（session.traj）不是密钥，可以记。
+    """
+    base = SESSIONS_DIR.parent
+    try:
+        rel = traj_file.relative_to(base)
+    except ValueError:
+        rel = traj_file.name
+    logger.warning(
+        "reindex failed",
+        event="reindex_failed",
+        path=str(rel),
+        exc_type=type(exc).__name__,
+    )
 
 
 def _summary(parsed: dict) -> dict:

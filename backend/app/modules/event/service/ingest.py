@@ -19,12 +19,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.core.timeutil import utc_now_iso
 from app.modules.event.schemas import EventIngestResponse
 from app.modules.event.service.guard import (
@@ -38,7 +38,7 @@ from app.modules.event.service.guard import (
     validate_metadata,
 )
 
-logger = logging.getLogger("uvicorn.error")
+logger = get_logger("agent.event")
 
 # 列顺序与 INSERT 对齐。用 text() 而不是 dialects.{postgresql,sqlite}.insert：
 # 那两个 on_conflict_do_nothing 是**两个不同的函数**，按 dialect 分派要写一个 if；
@@ -188,10 +188,22 @@ async def ingest_events(
     await db.commit()
 
     if rejected:
+        # 按批记一条，不按条记（方案 §3.6）。明细是「事件名:原因=条数」，
+        # 不含 metadata。事件名没有长度上限，截断后再进日志。
         logger.warning(
-            "events 上报含被拒事件: device=%s rejected=%d 明细=%s",
-            device_id,
-            rejected,
-            {f"{name}:{reason}": n for (name, reason), n in reject_counts.items()},
+            "events rejected",
+            event="events_rejected",
+            device_id=device_id,
+            count=rejected,
+            reason=_reject_summary(reject_counts),
         )
     return EventIngestResponse(accepted=accepted, deduped=max(deduped, 0), rejected=rejected)
+
+
+def _reject_summary(reject_counts: dict[tuple[str, str], int]) -> str:
+    """把拒绝明细收成一行。事件名截到 64 字符：它是客户端给的，不设上限。"""
+    parts = []
+    for (name, reason), n in sorted(reject_counts.items()):
+        shown = name if len(name) <= 64 else name[:61] + "..."
+        parts.append(f"{shown}:{reason}={n}")
+    return " ".join(parts)

@@ -16,10 +16,10 @@ M1：查 device_credentials.token_hash → 未吊销未过期 → DeviceContext�
 失败语义：无凭据 / 无效 / 过期 / 已吊销一律 401（fail-closed）。
 """
 
-import logging
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Optional
 
 from fastapi import HTTPException, Request
 from sqlalchemy import select
@@ -27,12 +27,13 @@ from sqlalchemy.orm import selectinload
 
 from app.core import db as db_mod
 from app.core.config import settings
-from app.core.logging import bind_context
+from app.core.logging import bind_context, db_error_fields, get_logger
 from app.core.timeutil import is_expired, utc_now
 from app.modules.identity.model import Device, DeviceCredential
 from app.modules.identity.service.secrets import hash_secret
 
-logger = logging.getLogger("uvicorn.error")
+auth_logger = get_logger("agent.auth")
+db_logger = get_logger("agent.db")
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,10 @@ async def require_device(request: Request) -> DeviceContext:
     用独立短会话，不占用请求级 get_db：后续控制面写库不会撞上「鉴权已经 commit」。
     last_seen_at 写失败不影响鉴权本身（心跳不是授予信任）。
     """
-    token = _bearer_token(request)
+    token, reject_reason = _bearer_token(request)
+    if reject_reason is not None:
+        # 头缺失与头坏了分开。两者都还没有凭据可以查。
+        _reject(reject_reason)
     token_hash = hash_secret(token)
 
     async with db_mod.async_session() as db:
@@ -74,13 +78,16 @@ async def require_device(request: Request) -> DeviceContext:
         dummy = "0" * 64
         stored = cred.token_hash if cred is not None else dummy
         if not secrets.compare_digest(stored, token_hash) or cred is None:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-        if cred.revoked_at is not None or is_expired(cred.expires_at):
-            raise HTTPException(status_code=401, detail="Unauthorized")
+            _reject("unknown")
+        if cred.revoked_at is not None:
+            _reject("revoked")
+        if is_expired(cred.expires_at):
+            _reject("expired")
 
         device = cred.device
         if device is None or device.organization is None:
-            raise HTTPException(status_code=401, detail="Unauthorized")
+            # 凭据在，设备或组织没了。对外仍是 401，原因归查无此证。
+            _reject("unknown")
 
         ctx = DeviceContext(
             device_id=device.device_id,
@@ -100,19 +107,42 @@ async def require_device(request: Request) -> DeviceContext:
         cred.expires_at = (now + timedelta(days=settings.control_plane.CTL_CREDENTIAL_TTL_DAYS)).isoformat()
         try:
             await db.commit()
-        except Exception:
-            logger.exception("更新设备 last_seen_at 失败")
+        except Exception as exc:
+            # 提交失败不是鉴权失败，归 db（方案 §3.5）。栈按 §4.5 裁剪：
+            # 数据库异常的消息里有语句和绑定参数，不能原样进 exc。
+            fields, logged = db_error_fields(exc)
+            db_logger.exception(
+                "commit failed",
+                logged,
+                event="commit_failed",
+                device_id=ctx.device_id,
+                **fields,
+            )
             await db.rollback()
 
         return ctx
 
 
-def _bearer_token(request: Request) -> str:
+def _bearer_token(request: Request) -> tuple[str, Optional[str]]:
+    """解析 Authorization 头。
+
+    返回 (token, reason)。reason 非空表示头不合格，token 为空串：
+    头缺失是 missing_bearer，头在但不是 Bearer 或值为空是 malformed。
+    两者对外都是 401，日志里分开——配错和没配是两种处置。
+    """
     header = request.headers.get("Authorization", "")
+    if not header:
+        return "", "missing_bearer"
     prefix = "Bearer "
     if not header.startswith(prefix):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        return "", "malformed"
     token = header[len(prefix) :].strip()
     if not token:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    return token
+        return "", "malformed"
+    return token, None
+
+
+def _reject(reason: str) -> None:
+    """鉴权失败记一条 warning 后抛 401。reason 用枚举，不从异常消息取。"""
+    auth_logger.warning("credential rejected", event="auth_rejected", reason=reason)
+    raise HTTPException(status_code=401, detail="Unauthorized")

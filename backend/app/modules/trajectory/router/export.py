@@ -18,6 +18,7 @@ from app.modules.trajectory.model import Trajectory
 from app.modules.trajectory.schemas import SFTExportRequest, TrajectoryExportRequest
 from app.modules.trajectory.service.stats_service import build_trajectory_filters
 from app.modules.trajectory.service.storage import storage
+from app.modules.trajectory.service.traj_parser import load_traj_json
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -81,7 +82,7 @@ async def export_sft(
 
     lines = []
     for trajectory in trajectories:
-        traj_data = json.loads(_read_traj_content(trajectory))
+        traj_data = load_traj_json(_read_traj_content(trajectory), trajectory.session_id)
         record = _build_sft_record(trajectory, traj_data, request)
         if record is not None:
             lines.append(json.dumps(record, ensure_ascii=False))

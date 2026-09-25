@@ -4,6 +4,12 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from fastapi import HTTPException
+
+from app.core.logging import get_logger
+
+logger = get_logger("agent.trajectory")
+
 # 统一使用东八区本地时间存储，确保不同来源的时间可比较
 _LOCAL_TZ = timezone(timedelta(hours=8))
 
@@ -122,3 +128,29 @@ def _calc_duration(metadata: dict) -> Optional[int]:
         return int((e - s).total_seconds() * 1000)
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def load_traj_json(content: bytes, session_id: str) -> dict:
+    """解析已入库的 .traj。失败记一条 warning 再抛 500。
+
+    文件在上传时校验过，这里失败说明库里的文件损坏。不回传解析原文：
+    原文里有文件内容的片段。详情与导出共用这一处，避免两处各写一份后漏改。
+    """
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        _parse_failed(session_id, type(exc).__name__)
+    else:
+        if isinstance(data, dict):
+            return data
+        _parse_failed(session_id, "TypeError")
+    raise HTTPException(status_code=500, detail="internal error")
+
+
+def _parse_failed(session_id: str, exc_type: str) -> None:
+    logger.warning(
+        "parse failed",
+        event="parse_failed",
+        session_id=session_id,
+        exc_type=exc_type,
+    )

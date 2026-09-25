@@ -762,5 +762,81 @@ def test_no_create_all_in_runtime_code():
     )
 
 
+
+# ---------------------------------------------------------------------------
+# 日志归属（方案 §6 的两条边界扫描）
+# ---------------------------------------------------------------------------
+def test_no_uvicorn_error_logger():
+    """业务日志不得再挂 uvicorn.error。
+
+    挂在它上面的 INFO 只有 uvicorn 自己的 handler 才看得见，应用的格式、
+    级别、字段全部失效。一律走 get_logger。
+    """
+    violations = []
+    for path in _iter_py_files(APP_DIR):
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            if '"uvicorn.error"' in line or "'uvicorn.error'" in line:
+                violations.append(f"{path.relative_to(BACKEND_DIR)}:{i}")
+    assert not violations, (
+        "app/ 下不得再出现 getLogger(\"uvicorn.error\")，改用 get_logger:\n  "
+        + "\n  ".join(violations)
+    )
+
+
+def test_auth_and_db_loggers_use_fixed_events():
+    """agent.auth 只配 auth_rejected，agent.db 只配 commit_failed。
+
+    两个名字不按目录独占（方案 §3.1）：鉴权拒绝谁产生谁记，提交失败同理。
+    所以不拦它们出现在哪，只拦 event 用错——用错了按 reason 检索就落空。
+
+    agent.access 只属于中间件，业务模块出现它就是越界。
+    """
+    violations = []
+    for path in _iter_py_files(APP_DIR / "modules"):
+        text = path.read_text(encoding="utf-8")
+        if "agent.access" in text:
+            violations.append(f"{path.relative_to(BACKEND_DIR)} 出现 agent.access")
+        violations.extend(_mismatched_events(path, text, "agent.auth", "auth_rejected"))
+        violations.extend(_mismatched_events(path, text, "agent.db", "commit_failed"))
+    assert not violations, (
+        "logger 名与 event 错配（agent.auth 只配 auth_rejected，agent.db 只配 commit_failed）:\n  "
+        + "\n  ".join(violations)
+    )
+
+
+def _mismatched_events(path, text: str, logger_name: str, expected_event: str) -> list[str]:
+    """按一次调用检查，而不是按整文件。
+
+    一个文件可以同时有两个 logger。event 关键字只与它前面最近一次
+    get_logger 的名字对上，跨了别的 logger 不算错配。
+    """
+    import re
+
+    bad = []
+    owners = [
+        (m.start(), m.group(1))
+        for m in re.finditer(r'get_logger\("([^"]+)"\)', text)
+    ]
+    if not any(name == logger_name for _, name in owners):
+        return bad
+    for m in re.finditer(r'event="([^"]*)"', text):
+        event = m.group(1)
+        owner = ""
+        for pos, name in owners:
+            if pos < m.start():
+                owner = name
+            else:
+                break
+        if owner == logger_name and event != expected_event:
+            line_no = text.count("\n", 0, m.start()) + 1
+            bad.append(
+                f"{path.relative_to(BACKEND_DIR)}:{line_no} "
+                f"{logger_name} 配了 event={event!r}，只允许 {expected_event!r}"
+            )
+    return bad
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
