@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.logging import current_actor, get_logger
 from app.core.timeutil import iso_after, utc_now_iso
 from app.modules.identity.model import Device, DeviceCredential, EnrollCode, Organization, Team
 from app.modules.identity.schemas import (
@@ -24,6 +25,8 @@ from app.modules.identity.schemas import (
     RevokeResponse,
 )
 from app.modules.identity.service.secrets import hash_secret, mint_enroll_code
+
+logger = get_logger("agent.identity")
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,8 @@ async def create_enroll_code(
         )
     )
     await db.commit()
+    # 明文码只在响应里出现一次，日志不记。target 用组织，不记码的任何片段。
+    _admin_write("enroll_code", org.org_id)
     return EnrollCodeCreated(
         code=plaintext,
         org_id=org.org_id,
@@ -221,7 +226,23 @@ async def revoke_device(db: AsyncSession, device_id: str) -> RevokeResponse:
     )
     device.updated_at = now_iso
     await db.commit()
+    _admin_write("revoke", device.device_id)
     return RevokeResponse(device_id=device.device_id, revoked=True)
+
+
+def _admin_write(action: str, target_id: str) -> None:
+    """管理台写操作完成一条。actor 从上下文取（方案 §3.6、§3.9）。
+
+    identity 没有审计表，这条日志是吊销与签发注册码的唯一运行记录。
+    注册码明文不进日志，它只在响应里出现一次。
+    """
+    logger.info(
+        "admin write",
+        event="admin_write",
+        action=action,
+        target_id=target_id,
+        actor=current_actor(),
+    )
 
 
 def _to_list_item(device: Device) -> DeviceListItem:

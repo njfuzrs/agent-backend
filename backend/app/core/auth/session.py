@@ -23,6 +23,7 @@ import time
 from fastapi import HTTPException, Request, Response
 
 from app.core.config import settings
+from app.core.logging import bind_context
 
 COOKIE_NAME = "traj_session"
 # 会话有效期：8 小时（一个工作日），到期需重新登录
@@ -99,9 +100,18 @@ def verify_credentials(username: str, password: str) -> bool:
     return ok_user and ok_pass
 
 
-def require_web_session(request: Request) -> str:
-    """管理台鉴权依赖：只认 cookie 会话。用于 /api/v1/auth/me。"""
+async def require_web_session(request: Request) -> str:
+    """管理台鉴权依赖：只认 cookie 会话。用于 /api/v1/auth/me。
+
+    必须是异步的。FastAPI 把同步依赖丢进线程池，而 contextvar 不跨线程——
+    在同步函数里写的 actor，请求回到事件循环后就读不到了，admin_write 的
+    actor 会是空的，和审计行对不上（方案 §3.9）。
+    """
     username = read_session(request)
     if not username:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    # 管理台路由只挂本依赖，不走 verify_basic_auth，所以 actor 在这里写。
+    # 不写的话 admin_write 的日志与审计行的 actor 列对不上（方案 §3.9）。
+    # 只记种类与用户名，不记 cookie 值。
+    bind_context(auth="session", actor=username)
     return username

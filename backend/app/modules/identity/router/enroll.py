@@ -38,6 +38,6 @@ async def enroll(
 
 
 def _reject_enroll() -> None:
-    """注册失败记一条 warning 后抛 401。成功不在这里记，归 PR-L3。"""
+    """注册失败记一条 warning 后抛 401。成功由 enroll_device 记 device_enrolled。"""
     logger.warning("credential rejected", event="auth_rejected", reason="enroll_rejected")
     raise HTTPException(status_code=401, detail="Invalid enroll token")

@@ -77,6 +77,9 @@ class PolicyAudit(Base):
     reason = Column(Text, nullable=False)
     actor = Column(Text, nullable=False, default="")
     created_at = Column(Text, nullable=False)
+    # 跳回同一次请求的日志用。可空：脚本直接改库没有请求，旧行也不回填。
+    # 不建索引——审计按时间查，这个值是跳转用的，不是检索用的（方案 §3.9）。
+    request_id = Column(Text, nullable=True)
 
     __table_args__ = (
         Index("idx_policy_audit_scope", "scope_type", "scope_id"),
