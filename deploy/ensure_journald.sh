@@ -36,7 +36,7 @@ cp "$SRC" "$tmp"
 install -m 644 "$tmp" "$DEST"
 rm -f "$tmp"
 
-systemctl restart systemd-journald || die "systemd-journald 重启失败（drop-in 已写入 $DEST）"
+systemctl restart systemd-journald || die "systemd-journald 重启失败（drop-in 已写入 ${DEST}）"
 systemctl is-active --quiet systemd-journald || die "systemd-journald 没有回到 active"
 
 # 现有归档不会在重启时被删。按上限收一次，把已经超过 30 天的清掉。
