@@ -20,18 +20,18 @@
 """
 
 import json
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth.control_plane import DeviceContext, require_device
 from app.core.db import get_db
+from app.core.logging import get_logger
 from app.modules.event.schemas import EventIngestResponse
 from app.modules.event.service.guard import MAX_BODY_BYTES, MAX_EVENTS_PER_REQUEST
 from app.modules.event.service.ingest import ingest_events
 
-logger = logging.getLogger("uvicorn.error")
+logger = get_logger("agent.event")
 
 router = APIRouter(tags=["events-ingest"])
 
@@ -50,9 +50,11 @@ async def post_events(
     raw = await request.body()
     if len(raw) > MAX_BODY_BYTES:
         logger.warning(
-            "events 上报超 body 上限: device=%s bytes=%d",
-            ctx.device_id,
-            len(raw),
+            "events rejected",
+            event="events_rejected",
+            reason="too_large",
+            device_id=ctx.device_id,
+            bytes_in=len(raw),
         )
         raise HTTPException(status_code=413, detail="payload too large")
 
@@ -69,10 +71,11 @@ async def post_events(
     n = len(events)
     if n > MAX_EVENTS_PER_REQUEST:
         logger.warning(
-            "events 上报超条数上限: device=%s n=%d 上限=%d",
-            ctx.device_id,
-            n,
-            MAX_EVENTS_PER_REQUEST,
+            "events rejected",
+            event="events_rejected",
+            reason="too_many",
+            device_id=ctx.device_id,
+            count=n,
         )
         raise HTTPException(
             status_code=413,

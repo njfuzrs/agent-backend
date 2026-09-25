@@ -14,11 +14,20 @@ import secrets
 import time
 
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.core.logging import bind_context, clear_context, context_value, get_logger
+from app.core.logging import (
+    bind_context,
+    clear_context,
+    context_value,
+    db_error_fields,
+    get_logger,
+)
 
 logger = get_logger("agent.access")
+# 未捕获异常的兜底记在 agent 上，不记在访问日志上（方案 §3.7）。
+error_logger = get_logger("agent")
 
 # 客户端传来的编号只在符合这个形状时采用。不设限制的话，一个换行就能把
 # 一条日志拆成两条（方案 §3.3）。
@@ -181,6 +190,17 @@ class RequestContextMiddleware:
 
         try:
             await self.app(scope, receive, send_with_id)
+        except Exception as exc:
+            # 在清上下文之前记。FastAPI 把 Exception 处理器放在用户中间件的
+            # 外面（ServerErrorMiddleware），等它运行时 request_id 已经被清掉，
+            # 响应里就没有编号了。HTTPException 与校验错误被内层中间件处理成
+            # 正常响应，到不了这里。
+            self._log_unhandled(scope, exc)
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "internal error", "request_id": request_id},
+            )
+            await response(scope, receive, send_with_id)
         finally:
             duration_ms = round((_now() - started) * 1000, 1)
             try:
@@ -209,6 +229,15 @@ class RequestContextMiddleware:
         level = _access_level(route, status_code, duration_ms)
         log = getattr(logger, level)
         log("request completed", **fields)
+
+    def _log_unhandled(self, scope: Scope, exc: Exception) -> None:
+        """未捕获异常记一条 error，带栈。数据库异常先裁剪（方案 §4.5）。"""
+        fields, logged = db_error_fields(exc)
+        fields.update(
+            event="unhandled_exception",
+            route=route_template(Request(scope)),
+        )
+        error_logger.exception("unhandled exception", logged, **fields)
 
 
 def _access_level(route: str, status_code: int, duration_ms: float) -> str:

@@ -17,7 +17,9 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.core.auth.session import read_session
 from app.core.config import settings
-from app.core.logging import bind_context
+from app.core.logging import bind_context, get_logger
+
+logger = get_logger("agent.auth")
 
 # auto_error=False：没有 Authorization 头时返回 None 而不是直接 401，
 # 这样才能落到 cookie 会话那条分支上。
@@ -49,18 +51,33 @@ def verify_basic_auth(
         if ok_user and ok_pass:
             bind_context(auth="basic", actor=credentials.username)
             return credentials.username
+        # 头在但用户名或口令不对。不记尝试值：reason 是枚举，够区分。
+        _reject("basic_rejected", basic=True)
 
-    raise HTTPException(
-        status_code=401,
-        detail="Unauthorized",
-        headers={"WWW-Authenticate": "Basic"},
-    )
+    # 既没有会话也没有 Authorization 头。reason 与口令不对相同：
+    # basic 没有「头缺失」和「头坏了」两种处置，枚举里不分。
+    _reject("basic_rejected", basic=True)
 
 
 def verify_upload_token(request: Request):
     """上传端认证：X-Upload-Token Header"""
     token = request.headers.get("X-Upload-Token", "")
     if not secrets.compare_digest(token, settings.UPLOAD_TOKEN):
-        raise HTTPException(status_code=401, detail="Invalid upload token")
-    # 通过才记。失败日志归 PR-L2，这里不打——否则 L1 会提前改错误响应的可观测性。
+        # 头缺失与头不对同一个 reason：upload token 没有两种处置。
+        # 只记 reason，token 的任何子串都不进日志（方案 §3.5）。
+        _reject("token_rejected")
     bind_context(auth="upload_token")
+
+
+def _reject(reason: str, basic: bool = False) -> None:
+    """鉴权失败记一条 warning 后抛 401。成功不记：访问日志已有 auth 种类。
+
+    msg 是固定短句，检索靠 reason。不从异常消息取 reason——
+    异常消息可能带上游原文。
+
+    必须抛。只记日志就等于错误凭据照样放行，而这条是冻结区的上传鉴权。
+    basic 为真时带 WWW-Authenticate，浏览器才知道该用哪种方式重试。
+    """
+    logger.warning("credential rejected", event="auth_rejected", reason=reason)
+    headers = {"WWW-Authenticate": "Basic"} if basic else None
+    raise HTTPException(status_code=401, detail="Unauthorized", headers=headers)

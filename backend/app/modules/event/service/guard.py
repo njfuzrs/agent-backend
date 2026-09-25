@@ -11,10 +11,7 @@ fail-open（坏的那条计 rejected，好的照常入库）。两者不是矛�
 
 import hashlib
 import json
-import logging
 from typing import Any
-
-logger = logging.getLogger("uvicorn.error")
 
 # --- 上限（契约 §7）。改这里要同步改 01-契约.md ---------------------------------
 MAX_EVENTS_PER_REQUEST = 500  # 客户端默认 batchSize=100，重放批次可能更大
@@ -165,8 +162,8 @@ def validate_event_name(name: Any) -> str:
     if not isinstance(name, str) or not name:
         raise RejectedEvent(REASON_BAD_SHAPE, "")
     if name not in ALLOWED_EVENT_NAMES:
-        # 必须把名字打出来：否则「新事件被静默丢」这个已知风险就没有出口。
-        logger.warning("事件名不在白名单，已拒绝: %s", name)
+        # 名字不在这里打。它随 RejectedEvent 进批次汇总那条 events_rejected，
+        # 一条批次只留一条日志（方案 §3.6）。这里再记就是每个坏名字一条。
         raise RejectedEvent(REASON_UNKNOWN_NAME, name)
     return name
 

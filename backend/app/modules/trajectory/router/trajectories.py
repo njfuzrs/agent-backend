@@ -24,6 +24,7 @@ from app.modules.trajectory.schemas import (
 )
 from app.modules.trajectory.service.stats_service import build_trajectory_filters
 from app.modules.trajectory.service.storage import storage
+from app.modules.trajectory.service.traj_parser import load_traj_json
 
 router = APIRouter(prefix="/trajectories", tags=["trajectories"])
 
@@ -160,7 +161,7 @@ async def get_trajectory_steps(
     traj = await _get_traj_or_404(session_id, db)
     content = _read_traj_content(traj)
 
-    traj_data = json.loads(content)
+    traj_data = load_traj_json(content, session_id)
     all_steps = traj_data.get("trajectory", [])
     total = len(all_steps)
     items = all_steps[offset:offset + limit]
@@ -174,7 +175,7 @@ async def get_trajectory_history(session_id: str, db: AsyncSession = Depends(get
     traj = await _get_traj_or_404(session_id, db)
     content = _read_traj_content(traj)
 
-    traj_data = json.loads(content)
+    traj_data = load_traj_json(content, session_id)
     return traj_data.get("history", [])
 
 
@@ -184,7 +185,7 @@ async def get_trajectory_info(session_id: str, db: AsyncSession = Depends(get_db
     traj = await _get_traj_or_404(session_id, db)
     content = _read_traj_content(traj)
 
-    traj_data = json.loads(content)
+    traj_data = load_traj_json(content, session_id)
     return traj_data.get("info", {})
 
 

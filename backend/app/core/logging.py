@@ -58,6 +58,9 @@ BUSINESS_FIELDS = frozenset(
         "count",
         "file_type",
         "exc_type",
+        "sqlstate",
+        # 422 时哪些字段没过校验。只含字段路径（body.reason 这种），不含提交的值。
+        "fields",
         "target_id",
         # 启动时 schema 检查读到的 alembic 版本。只有这一处用，单独开字段是因为
         # 把它拼进 msg 就违反「msg 不承担检索」，而现有字段没有一个能装版本号。
@@ -180,7 +183,21 @@ class AgentLogger:
     def error(self, msg: str, **fields: Any) -> None:
         self._emit(logging.ERROR, msg, fields)
 
-    def _emit(self, level: int, msg: str, fields: dict) -> None:
+    def exception(self, msg: str, exc: BaseException, **fields: Any) -> None:
+        """记一条带栈的 error。
+
+        不接受 exc_info 这种标准库参数：栈从显式传入的异常取，调用点
+        看得到记的是哪一个。数据库异常先按 §4.5 裁剪再进来，本方法不裁剪。
+        """
+        self._emit(logging.ERROR, msg, fields, exc=exc)
+
+    def _emit(
+        self,
+        level: int,
+        msg: str,
+        fields: dict,
+        exc: Optional[BaseException] = None,
+    ) -> None:
         if _MSG_PLACEHOLDER.search(msg):
             raise TypeError(
                 f"日志 msg 禁止拼变量（{msg!r}）。检索信息放 event / reason 字段，msg 用固定短句"
@@ -207,10 +224,36 @@ class AgentLogger:
             return
         if self._logger.manager.disable >= level:
             return
-        record = self._logger.makeRecord(self.name, level, "(agent)", 0, msg, (), None)
+        exc_info = (type(exc), exc, exc.__traceback__) if exc is not None else None
+        record = self._logger.makeRecord(
+            self.name, level, "(agent)", 0, msg, (), exc_info
+        )
         record.agent_fields = fields
         _freeze(record)
         self._logger.handle(record)
+
+
+def db_error_fields(exc: BaseException) -> tuple[dict, BaseException]:
+    """数据库异常进日志之前的裁剪（方案 §4.5）。
+
+    ``DBAPIError`` 的字符串包含语句和绑定参数。它一旦进 ``exc`` 字段，
+    字段白名单就全部失效——白名单管的是字段名，管不到栈的内容。
+
+    返回 (字段, 记栈用的异常)。是数据库异常时：``sqlstate`` 取得到才带，
+    栈换成一句固定文本；不是时原样返回，调用点不用自己判断。
+    """
+    from sqlalchemy.exc import DBAPIError
+
+    fields: dict[str, Any] = {"exc_type": type(exc).__name__}
+    if isinstance(exc, DBAPIError):
+        orig = getattr(exc, "orig", None)
+        sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+        if sqlstate:
+            fields["sqlstate"] = str(sqlstate)
+        # 类名写进文本：exc 字段里的栈不再指向原始异常，只靠字段会在
+        # 文本格式里看丢类型。语句和参数仍然不在。
+        return fields, RuntimeError(f"db error, statement omitted ({type(exc).__name__})")
+    return fields, exc
 
 
 def get_logger(name: str) -> AgentLogger:
