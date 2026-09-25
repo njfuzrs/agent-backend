@@ -66,6 +66,12 @@ class ControlPlaneSettings(BaseSettings):
     # 一次性注册码有效期（小时）。签发是授予信任，码本身也应短命。
     CTL_ENROLL_CODE_TTL_HOURS: int = 24
 
+    # 遥控中继的对外地址，原样放进签发响应。不从请求 Host 猜：
+    # 猜错会让远程客户端去连一个 301 之后的地址，握手直接失败。
+    # 留空时用本机 sidecar 的回环地址，只够本地开发。
+    # 生产必须配 wss://www.sid-code.cc/traj/api/v1/bridge/ws。
+    BRIDGE_WS_PUBLIC_URL: str = ""
+
 
 class StorageSettings(BaseSettings):
     """存储：本地文件系统 或 阿里云 OSS，由 STORAGE_BACKEND 切换。"""

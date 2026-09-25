@@ -1,0 +1,34 @@
+# 参考件。生产 unit 不随发版覆盖，装机与升级都要人手复制到
+# /etc/systemd/system/agent-backend-bridge.service 再 daemon-reload。
+#
+# 这是中继进程，不是主应用。主应用 --workers 2，连接配对是进程内存，
+# 两个 worker 会让 CLI 与控制端永远等不到对方。所以这里 workers 必须是 1，
+# 不要改成 2。
+#
+# ExecStart 的解释器与现役主 unit 保持一致（系统 python3，不是 venv）。
+# 只绑 127.0.0.1：对外的 wss 由 nginx 反代，本进程不暴露到网卡。
+
+[Unit]
+Description=Agent Backend Bridge (WebSocket relay)
+After=network.target agent-backend.service
+PartOf=agent-backend.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/agent-backend/backend
+EnvironmentFile=/opt/agent-backend/.env
+EnvironmentFile=-/opt/agent-backend/.version
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agent-backend-bridge
+ExecStart=/usr/bin/python3 -m uvicorn app.modules.bridge.sidecar.main:app \
+    --host 127.0.0.1 \
+    --port 8901 \
+    --workers 1 \
+    --log-level info
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

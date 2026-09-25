@@ -20,6 +20,9 @@
     ⑨ POST /usage/ledger 挂 require_device（不在 /ctl/ 下，② 扫不到）；
        GET /ctl/budget 挂 require_device 且不在豁免名单；/budgets/** 挂 cookie；
        账本无 DELETE；by-scope 响应无 unit_price
+    ⑩ POST /ctl/bridge/sessions 挂 require_device（② 也会扫到，这条把失败说成人话）；
+       /bridge/sessions/** 挂 cookie（不在 /ctl/ 下，② 扫不到）；
+       主应用不得挂 WebSocket 路由（挂上 + --workers 2 = 配对静默裂开）
 """
 
 import ast
@@ -39,7 +42,7 @@ APP_DIR = BACKEND_DIR / "app"
 DATA_PLANE_AUTH_SYMBOLS = {"verify_upload_token", "verify_basic_auth"}
 
 # 控制面模块（规划 §2.1）。M1-M5 逐个补齐，目录不存在时跳过。
-CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "event", "cost"]
+CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "event", "cost", "bridge"]
 
 
 def _iter_py_files(root: Path):
@@ -736,6 +739,121 @@ def test_usage_stats_response_has_no_unit_price():
     assert not violations, (
         "cost 模块出现单价字段（规划口径陷阱）:\n  " + "\n  ".join(violations)
     )
+
+
+# ---------------------------------------------------------------------------
+# ⑩ bridge：签发在 /ctl/ 下；管理台不在；WebSocket 不在主应用里。
+# ---------------------------------------------------------------------------
+def test_bridge_session_create_requires_device():
+    """POST /ctl/bridge/sessions 必须挂 require_device。
+
+    这条其实会被门禁 ② 扫到（路径含 /ctl/）。显式再写一条，是为了失败信息
+    说人话：漏挂等于谁都能签发遥控凭证。
+    假门禁对策：注释掉 serve.py 的 Depends(require_device) 必须红，已红过。
+    """
+    from app.core.auth.control_plane import require_device
+    from app.main import app
+
+    found = False
+    for path, methods, dependant in _iter_app_routes(app):
+        if (path.rstrip("/") or path) != "/api/v1/ctl/bridge/sessions":
+            continue
+        if "POST" not in methods:
+            continue
+        found = True
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        assert any(getattr(d, "call", None) is require_device for d in deps), (
+            "POST /api/v1/ctl/bridge/sessions 没挂 require_device。"
+            "漏挂等于无认证签发遥控凭证。"
+        )
+    assert found, "POST /api/v1/ctl/bridge/sessions 不存在 —— bridge 模块是否没注册？"
+
+
+def test_bridge_admin_requires_web_session():
+    """GET/POST /bridge/sessions/** 必须挂 require_web_session。
+
+    不在 /ctl/ 下，门禁 ② 扫不到。漏挂等于匿名签发 controller token，
+    能直接遥控别人的机器。
+    假门禁对策：去掉 admin.py 路由级的 require_web_session 必须红，已红过。
+    """
+    from app.core.auth.session import require_web_session
+    from app.main import app
+
+    checked = 0
+    offenders = []
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/bridge/sessions"):
+            continue
+        deps = list(_flatten_deps(getattr(dependant, "dependencies", []) or []))
+        if not any(getattr(d, "call", None) is require_web_session for d in deps):
+            offenders.append(f"{','.join(sorted(methods))} {path}")
+        checked += 1
+
+    assert checked > 0, "没找到 /api/v1/bridge/sessions 管理端点 —— bridge 模块是否没注册？"
+    assert not offenders, (
+        "以下 bridge 管理端点没挂 require_web_session:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_bridge_ws_not_mounted_on_main_app():
+    """主 FastAPI app 不得挂 WebSocket 路由。
+
+    挂上去再叠加生产的 --workers 2，CLI 与控制端会落到不同进程，配对静默裂开，
+    没有任何 HTTP 测试会红。中继必须在独立 sidecar 进程里。
+    假门禁对策：在 main.py include sidecar 的 WS 路由必须红，已红过。
+    """
+    from fastapi.routing import APIWebSocketRoute
+
+    from app.main import app
+
+    sockets = [r.path for r in app.routes if isinstance(r, APIWebSocketRoute)]
+    assert not sockets, (
+        "主应用挂了 WebSocket 路由 "
+        + ", ".join(sockets)
+        + "。中继必须在 app.modules.bridge.sidecar.main 里单独起进程。"
+    )
+
+
+def test_upload_token_cannot_create_bridge_session(monkeypatch, tmp_path):
+    """X-Upload-Token 调 POST /ctl/bridge/sessions → 401。
+
+    纪律 1 在本里程碑的具体形态：谁拿到上传 token 谁不能因此遥控全公司的机器。
+    与 events / policy 的同名用例同一条理由。
+    """
+    db_path = tmp_path / "bridge-boundary.db"
+    db_url = f"sqlite+aiosqlite:///{db_path}"
+
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core import db as db_mod
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DATABASE_URL", db_url)
+    engine = create_async_engine(db_url, echo=False)
+    session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(db_mod, "engine", engine)
+    monkeypatch.setattr(db_mod, "async_session", session_factory)
+
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
+    command.upgrade(cfg, "head")
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/v1/ctl/bridge/sessions",
+            json={},
+            headers={"X-Upload-Token": settings.data_plane.UPLOAD_TOKEN},
+        )
+    engine.sync_engine.dispose()
+    assert resp.status_code == 401, resp.text
 
 
 def test_no_create_all_in_runtime_code():

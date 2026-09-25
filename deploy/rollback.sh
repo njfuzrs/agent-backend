@@ -283,6 +283,10 @@ printf 'AGENT_VERSION=%s\n' "$TARGET" > "$ROOT/.version" \
   || die "写 $ROOT/.version 失败（回滚中止：进程会以 version=unknown 启动）"
 log "已写 $ROOT/.version = $TARGET （重启前）"
 
+# 这里只重启主应用。中继是另一个 unit（agent-backend-bridge），本脚本不认识它，
+# 也不去停一个可能根本没装的 unit。退到没有 /ctl/bridge 的版本时，旧的 sidecar
+# 会继续转发已经配上的连接，直到探活超时。要立刻切断遥控，人手执行：
+#   systemctl stop agent-backend-bridge
 log "systemctl restart $UNIT"
 systemctl restart "$UNIT"
 

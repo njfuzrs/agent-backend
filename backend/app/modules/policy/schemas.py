@@ -8,11 +8,21 @@
 guard 再拦一层嵌套规则）。
 """
 
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 ScopeType = Literal["device", "team", "org"]
+
+
+def _strict_bool(value: Any) -> Any:
+    """只收真正的 bool。Pydantic 默认会把字符串 "false" 收成 False，这里不要。"""
+    if isinstance(value, bool) or value is None:
+        return value
+    raise ValueError("必须是布尔值")
+
+
+StrictBool = Annotated[bool, BeforeValidator(_strict_bool)]
 BypassMode = Literal["disable", "allow"]
 CustomizationSurface = Literal["commands", "skills", "agents", "hooks", "mcp-servers"]
 
@@ -45,6 +55,8 @@ class PolicySettingsIn(BaseModel):
     disabledModes: Optional[list[str]] = None
     disableBypassPermissionsMode: Optional[BypassMode] = None
     strictPluginOnlyCustomization: Optional[bool | list[CustomizationSurface]] = None
+    # 省略 = 未配置 = 不关遥控。false 才是约束。不做成 flag：flag 端点无认证。
+    bridgeEnabled: Optional[StrictBool] = None
 
 
 class PolicyCreate(BaseModel):
