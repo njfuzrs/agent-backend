@@ -403,14 +403,18 @@ def configure_logging() -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
     handler.addFilter(_ContextFilter())
+    # 标记自己装的那个。重复配置时只换它，不拆测试预先挂上的捕获器
+    # （tests/conftest.py 把 caplog 的 handler 挂在这里，拆掉就抓不到日志）。
+    handler._agent_owned = True  # noqa: SLF001 — 区分自己的 handler 与外部捕获器
 
     root = logging.getLogger(LOGGER_ROOT)
     root.setLevel(level)
     for old in list(root.handlers):
-        root.removeHandler(old)
+        if getattr(old, "_agent_owned", False):
+            root.removeHandler(old)
     root.addHandler(handler)
-    # 不向 root 传播。否则 caplog（挂在 root 上）与我们的 handler 各打一遍，
-    # 线上则会再被 uvicorn 的 root handler 打一遍纯文本。
+    # 不向 root 传播。线上传播一次，uvicorn 的 root handler 会把同一条再打成纯文本。
+    # 测试不靠传播：caplog 的 handler 直接挂在这个 logger 上。
     root.propagate = False
 
     # 第三方 logger 的级别在同一处钉死。不设 sqlalchemy echo（方案 §1.7）：

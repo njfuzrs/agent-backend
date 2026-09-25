@@ -74,7 +74,12 @@ async def _check_schema_version() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001 — FastAPI 要求这个签名
     await _check_schema_version()
-    yield
+    try:
+        yield
+    finally:
+        # 没有请求上下文，不带 request_id（方案 §3.10）。version 由 formatter 填，
+        # 用来确认是哪一次发布退出；uvicorn 自己的 Shutting down 不带这个字段。
+        logger.info("shutting down", event="shutdown")
 
 
 app = FastAPI(
