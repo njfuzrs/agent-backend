@@ -32,7 +32,7 @@ def ctx(tmp_path, monkeypatch):
     db_path = tmp_path / "relay.db"
     db_url = f"sqlite+aiosqlite:///{db_path}"
 
-    from sqlalchemy import event
+    from sqlalchemy import event  # noqa: I001 — 函数内导入保持「先第三方，后本地」，不按 isort 把本地提前
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -68,7 +68,7 @@ def ctx(tmp_path, monkeypatch):
     monkeypatch.setattr(sidecar_main, "relay", fresh)
     monkeypatch.setattr(relay_mod, "relay", fresh)
 
-    from fastapi.testclient import TestClient
+    from fastapi.testclient import TestClient  # noqa: I001 — 同上，先第三方后本地
 
     from app.main import app
 
@@ -135,18 +135,50 @@ def _auth(token: str, role: str) -> str:
     return json.dumps({"type": "auth", "token": token, "role": role})
 
 
-def _close_code(ws) -> int:
-    """等对端关闭。starlette 把关闭帧变成异常，code 在上面。"""
+def _close_frame(ws) -> tuple[int, str]:
+    """等对端关闭。starlette 把关闭帧变成异常，code 与 reason 在上面。"""
     with pytest.raises(Exception) as caught:
         ws.receive_text()
-    code = getattr(caught.value, "code", None)
-    if isinstance(code, int):
-        return code
-    # WebSocketDisconnect 的第一个参数就是 close code。
-    args = getattr(caught.value, "args", ())
-    if args and isinstance(args[0], int):
-        return args[0]
-    raise AssertionError(f"连接断了但没有 close code: {caught.value!r}")
+    exc = caught.value
+    code = getattr(exc, "code", None)
+    reason = getattr(exc, "reason", None)
+    if not isinstance(code, int):
+        args = getattr(exc, "args", ())
+        if args and isinstance(args[0], int):
+            code = args[0]
+            if len(args) > 1 and isinstance(args[1], str):
+                reason = args[1]
+    if not isinstance(code, int):
+        raise AssertionError(f"连接断了但没有 close code: {exc!r}")  # noqa: TRY004 — 断言失败就是 AssertionError，不是类型错误
+    return code, reason or ""
+
+
+def _close_code(ws) -> int:
+    return _close_frame(ws)[0]
+
+
+def _session_row(portal, session_id: str):
+    """库里的会话行。空闲超时不许改 state、不许写 disconnect_reason。
+
+    必须借中继所在的事件循环读。``asyncio.run`` 另开一个循环，aiosqlite 的
+    连接在那边用不了；再开一条同步连接则会让文件库上的异步连接失效。
+    """
+    from sqlalchemy import select  # noqa: I001 — 同上，先第三方后本地
+
+    from app.core import db as db_mod
+    from app.modules.bridge.model import BridgeAudit, BridgeSession
+
+    async def _read():
+        async with db_mod.async_session() as db:
+            row = await db.execute(select(BridgeSession).where(BridgeSession.id == session_id))
+            session = row.scalar_one()
+            audits = await db.execute(
+                select(BridgeAudit.action).where(BridgeAudit.session_id == session_id)
+            )
+            # 只带出普通值。ORM 对象出了这段 session 就是游离的。
+            return (session.state, session.disconnect_reason), [a[0] for a in audits]
+
+    return portal.call(_read)
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +255,10 @@ def test_paired_sides_receive_each_others_text(ctx):
         assert json.loads(ctrl.receive_text()) == {"type": "text", "data": "hello"}
 
         # 心跳必须穿过去。控制端可能只看不发，靠它保活。
+        # 同时回给发送方自己：CLI 的探活看的是这一帧有没有回来。
         cli.send_text(json.dumps({"type": "status", "data": {"ping": True}}))
         assert json.loads(ctrl.receive_text())["data"]["ping"] is True
+        assert json.loads(cli.receive_text())["data"]["ping"] is True
 
         ctrl.send_text(json.dumps({"type": "user_message", "data": "跑测试"}))
         assert json.loads(cli.receive_text())["data"] == "跑测试"
@@ -318,8 +352,13 @@ def test_admin_disconnect_closes_both_sides(ctx):
         assert resp.status_code == 204, resp.text
 
         asyncio.run(relay.poll_disconnects())
-        assert _close_code(cli) == 1008
-        assert _close_code(ctrl) == 1008
+        assert _close_frame(cli) == (1008, "admin_disconnect")
+        assert _close_frame(ctrl) == (1008, "admin_disconnect")
+
+        (state, reason), actions = _session_row(cli.portal, issued["session_id"])
+        assert state == "disconnected"
+        assert reason == "测试强制断开"
+        assert "disconnect" in actions
 
 
 def test_binary_frame_closes_the_connection(ctx):
@@ -350,3 +389,90 @@ def test_revoked_device_credential_rejects_existing_session(ctx):
     with ws_client.websocket_connect("/api/v1/bridge/ws") as ws:
         ws.send_text(_auth(issued["session_token"], "cli"))
         assert _close_code(ws) == 4001
+
+
+
+
+def test_idle_verdict_uses_the_newer_side():
+    """一侧静默、另一侧有心跳，不判空闲。两侧都旧才判。
+
+    修复前按本侧 last_inbound 计：控制端只读不发，60 秒后被当成
+    管理员强制断开。人在权限弹窗前犹豫超过一分钟就是这个形态。
+    """
+    from app.modules.bridge.sidecar.relay import _idle_verdict
+
+    # 控制端的帧停在 90 秒前，CLI 的心跳停在 30 秒前。上限 60。
+    assert _idle_verdict({"cli": 70, "controller": 10}, now=100, limit=60) is None
+    # 只有 CLI 一侧有记录（控制端连上后再没发过），一样不算静默。
+    assert _idle_verdict({"cli": 70}, now=100, limit=60) is None
+    # 两侧都超过上限，才关。
+    assert _idle_verdict({"cli": 30, "controller": 10}, now=100, limit=60) == "idle"
+    # 刚连上、还没有帧，不关。
+    assert _idle_verdict({}, now=100, limit=60) is None
+
+
+def test_one_silent_side_stays_paired(ctx):
+    """控制端一帧不发，CLI 的心跳穿过中继，连接还在、会话仍是 paired。
+
+    判定本身见 test_idle_verdict_uses_the_newer_side。这里钉的是另一半：
+    这种不对称没有被记成断开，下一帧也穿得过去。
+    """
+    http, ws_client, _relay = ctx
+    issued = _session(http, _credential(http))
+    controller = _controller(http, issued["session_id"])
+    with ws_client.websocket_connect("/api/v1/bridge/ws") as cli, ws_client.websocket_connect(
+        "/api/v1/bridge/ws"
+    ) as ctrl:
+        cli.send_text(_auth(issued["session_token"], "cli"))
+        ctrl.send_text(_auth(controller, "controller"))
+        cli.receive_text()
+        ctrl.receive_text()
+
+        # 控制端至此再无发送。只有 CLI 的心跳。
+        cli.send_text(json.dumps({"type": "status", "data": {"ping": True}}))
+        assert json.loads(ctrl.receive_text())["data"]["ping"] is True
+        # 回显先到。读掉它，下一帧才是业务帧。
+        assert json.loads(cli.receive_text())["data"]["ping"] is True
+
+        ctrl.send_text(json.dumps({"type": "user_message", "data": "回复 pong"}))
+        assert json.loads(cli.receive_text())["data"] == "回复 pong"
+        (state, reason), actions = _session_row(cli.portal, issued["session_id"])
+        assert state == "paired"
+        assert reason is None
+        assert "disconnect" not in actions
+
+
+def test_idle_close_is_1001_and_keeps_the_session(ctx):
+    """空闲关掉的是 1001 idle_timeout，且不把会话标成 disconnected。
+
+    标了会让旧 token 永久作废，重连即 4001——那正是空闲不该有的后果。
+    也不写 disconnect_reason：空闲不是审计理由。
+
+    不靠真等 60 秒。把两侧的最近一帧拨到上限之外，在中继自己的循环上
+    跑泵用的那个判定，再走它 verdict == "idle" 时的两句关闭。
+    """
+    from app.modules.bridge.sidecar import relay as relay_mod
+
+    http, ws_client, _relay = ctx
+    issued = _session(http, _credential(http))
+    controller = _controller(http, issued["session_id"])
+    with ws_client.websocket_connect("/api/v1/bridge/ws") as cli, ws_client.websocket_connect(
+        "/api/v1/bridge/ws"
+    ) as ctrl:
+        cli.send_text(_auth(issued["session_token"], "cli"))
+        ctrl.send_text(_auth(controller, "controller"))
+        cli.receive_text()
+        ctrl.receive_text()
+
+        # 泵阻塞在这一轮的 recv 上，轮询间隔是 2 秒，醒来才看空闲。
+        # 把上限拨到 0 而不是改间隔：间隔是模块级常量，改了会漏到别的用例。
+        # 判定用的是同一个名字，所以这一侧醒来时看到的上限就是 0。
+        relay_mod.IDLE_TIMEOUT_SECONDS = 0
+        assert _close_frame(cli) == (1001, "idle_timeout")
+
+        # 对端不跟着关，会话也不改。with 退出才会走 _leave，所以在退出前查。
+        ctrl.send_text(json.dumps({"type": "user_message", "data": "还在"}))
+        (state, reason), actions = _session_row(ctrl.portal, issued["session_id"])
+        assert state == "paired"
+        assert reason is None
+        assert "disconnect" not in actions
