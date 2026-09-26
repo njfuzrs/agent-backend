@@ -75,6 +75,15 @@ function toWebSocketUrl(wsUrl: string): string {
   return `${proto}//${window.location.host}${wsUrl.startsWith('/') ? '' : '/'}${wsUrl}`
 }
 
+/**
+ * 管理台保活周期。必须明显小于中继的空闲上限（60 秒）：
+ * 人在权限弹窗前犹豫时页面只画倒计时、不发业务帧，
+ * 没有这条，连接会在该收到 permission_expired 的时刻被拆掉。
+ * 帧是 `{type:"status", data:{ping:true}}`——中继转发它，CLI 主循环不认识
+ * status，不进队列。不要改成 user_message，那会变成真的远程指令。
+ */
+const KEEPALIVE_INTERVAL_MS = 20_000
+
 function statusText(data: unknown): { kind: BridgeLiveLine['kind']; text: string } | null {
   if (!isRecord(data)) return null
   if (data.ping === true) return null
@@ -123,6 +132,7 @@ export default function BridgeSessions() {
   const socketRef = useRef<LiveSocket | null>(null)
   const lineSeq = useRef(0)
   const frameSeq = useRef(0)
+  const keepaliveRef = useRef<number | null>(null)
   // 进入会话是异步的。快速连点两次时，先发出的那次返回后不能把后一次的连接盖掉。
   const enterSeq = useRef(0)
 
@@ -153,7 +163,15 @@ export default function BridgeSessions() {
     return () => window.clearInterval(timer)
   }, [pending.length])
 
+  const stopKeepalive = () => {
+    if (keepaliveRef.current !== null) {
+      window.clearInterval(keepaliveRef.current)
+      keepaliveRef.current = null
+    }
+  }
+
   const closeSocket = () => {
+    stopKeepalive()
     const current = socketRef.current
     socketRef.current = null
     if (current && current.ws.readyState < WebSocket.CLOSING) {
@@ -261,6 +279,13 @@ export default function BridgeSessions() {
         setLink('open')
         // token 只在这一帧里用。不进 state、不进 localStorage。
         ws.send(JSON.stringify({ type: 'auth', token: issued.session_token, role: 'controller' }))
+        // 保活。页面自己不发业务帧，人盯着权限弹窗思考时这一侧是静默的。
+        // 先清再挂：enter 连点时上一条连接的 interval 不能留到新连接上。
+        stopKeepalive()
+        keepaliveRef.current = window.setInterval(() => {
+          if (socketRef.current !== live || ws.readyState !== WebSocket.OPEN) return
+          ws.send(JSON.stringify({ type: 'status', data: { ping: true } }))
+        }, KEEPALIVE_INTERVAL_MS)
       }
       ws.onmessage = event => {
         if (socketRef.current !== live || typeof event.data !== 'string') return
@@ -268,6 +293,7 @@ export default function BridgeSessions() {
       }
       ws.onclose = () => {
         if (socketRef.current !== live) return
+        stopKeepalive()
         socketRef.current = null
         setLink('closed')
       }
