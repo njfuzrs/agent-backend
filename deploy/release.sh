@@ -42,12 +42,26 @@ resolve_root() {
 }
 
 # 优先新 unit；切流前线上只有 trajectory-platform。
+#
+# 必须解析出真正的 unit 名。trajectory-platform.service 在切流后只是
+# agent-backend.service 的 Alias，systemctl cat 对别名也返回 0，但
+# journalctl -u <别名> 是空的——日志都记在主名下。拿别名去排查等于没有日志。
 resolve_unit() {
-  if systemctl cat agent-backend.service >/dev/null 2>&1; then
+  local fragment
+  fragment="$(systemctl show -P FragmentPath agent-backend.service 2>/dev/null || true)"
+  if [[ -n "$fragment" && -f "$fragment" ]]; then
     printf '%s\n' agent-backend
-  else
-    printf '%s\n' trajectory-platform
+    return
   fi
+  fragment="$(systemctl show -P FragmentPath trajectory-platform.service 2>/dev/null || true)"
+  if [[ -n "$fragment" && -f "$fragment" ]]; then
+    # 别名的 FragmentPath 指向主 unit。用它的文件名，而不是调用时的那个名字。
+    local base
+    base="$(basename "$fragment")"
+    printf '%s\n' "${base%.service}"
+    return
+  fi
+  printf '%s\n' trajectory-platform
 }
 
 # 不 import 应用：SOURCE 没有 .env，env.py 会因为缺 AUTH_PASSWORD 直接 SystemExit。
@@ -403,6 +417,29 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
 done
 [[ "$ok" == "1" ]] || die "http://127.0.0.1:8900/api/v1/health 连续失败"
+
+# 中继是另一个进程，发版换了 app/ 之后它还在跑旧字节。配对协议一变就全 4001。
+# 主服务健康之后才重启它：中继起不来不该挡住主应用，没装过这个 unit 也不该挡住。
+# M6 是按需的，unit 不存在就跳过。
+BRIDGE_UNIT="agent-backend-bridge.service"
+if systemctl cat "$BRIDGE_UNIT" >/dev/null 2>&1; then
+  log "重启 $BRIDGE_UNIT"
+  systemctl restart "$BRIDGE_UNIT"
+  bridge_ok=0
+  for i in 1 2 3 4 5; do
+    if curl -fsS http://127.0.0.1:8901/health >/dev/null; then
+      log "bridge health ok (attempt $i)"
+      bridge_ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$bridge_ok" != "1" ]]; then
+    log "警告: sidecar 重启后 health 失败，主应用已更新。看 journalctl -u $BRIDGE_UNIT"
+  fi
+else
+  log "警告: 未安装 ${BRIDGE_UNIT}，跳过中继重启（M6 按需，不影响本次发版）"
+fi
 
 # 2026-09-22 起 IP/未知 Host 的 :80 是整块 410。本机 curl 不带 Host
 # 会走 default_server，再打 http://127.0.0.1/traj/ 就是 410（#20 合入后

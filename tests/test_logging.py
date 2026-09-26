@@ -206,6 +206,31 @@ def test_flags_fast_200_is_debug_only(client, caplog):
     assert access[0].levelno == logging.DEBUG
 
 
+def test_shutdown_is_logged_with_version(caplog, monkeypatch):
+    """进程退出记一条带 version 的 shutdown。uvicorn 自己的 Shutting down 没有它。
+
+    用独立的 TestClient：共用的 client fixture 已经把启动走完了，
+    退出日志要在 with 块结束时才产生。
+    """
+    from fastapi.testclient import TestClient
+
+    from app.core.logging import reset_version_cache
+    from app.main import app
+
+    monkeypatch.setenv("AGENT_VERSION", "abc1234")
+    reset_version_cache()
+    try:
+        with caplog.at_level(logging.INFO, logger="agent"):
+            with TestClient(app, raise_server_exceptions=False):
+                pass
+        text = rendered(caplog)
+        assert "event=shutdown" in text
+        assert "version=abc1234" in text
+        assert "shutting down" in text
+    finally:
+        reset_version_cache()
+
+
 def test_flags_slow_200_is_logged_at_info(client, caplog, monkeypatch):
     """耗时达到阈值就升到 info。用假时钟，不真的睡一秒。
 

@@ -44,11 +44,22 @@ resolve_root() {
 }
 
 resolve_unit() {
-  if systemctl cat agent-backend.service >/dev/null 2>&1; then
+  # 与 release.sh 同一规则：返回真正的 unit 名，不返回别名。
+  # trajectory-platform.service 是别名时 journalctl -u 它是空的。
+  local fragment
+  fragment="$(systemctl show -P FragmentPath agent-backend.service 2>/dev/null || true)"
+  if [[ -n "$fragment" && -f "$fragment" ]]; then
     printf '%s\n' agent-backend
-  else
-    printf '%s\n' trajectory-platform
+    return
   fi
+  fragment="$(systemctl show -P FragmentPath trajectory-platform.service 2>/dev/null || true)"
+  if [[ -n "$fragment" && -f "$fragment" ]]; then
+    local base
+    base="$(basename "$fragment")"
+    printf '%s\n' "${base%.service}"
+    return
+  fi
+  printf '%s\n' trajectory-platform
 }
 
 # 与 release.sh 的 ensure_unit 是同一份逻辑。回滚也要收敛 unit：
@@ -283,6 +294,10 @@ printf 'AGENT_VERSION=%s\n' "$TARGET" > "$ROOT/.version" \
   || die "写 $ROOT/.version 失败（回滚中止：进程会以 version=unknown 启动）"
 log "已写 $ROOT/.version = $TARGET （重启前）"
 
+# 这里只重启主应用。中继是另一个 unit（agent-backend-bridge），本脚本不认识它，
+# 也不去停一个可能根本没装的 unit。退到没有 /ctl/bridge 的版本时，旧的 sidecar
+# 会继续转发已经配上的连接，直到探活超时。要立刻切断遥控，人手执行：
+#   systemctl stop agent-backend-bridge
 log "systemctl restart $UNIT"
 systemctl restart "$UNIT"
 
@@ -296,7 +311,7 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   fi
   sleep 2
 done
-[[ "$ok" == "1" ]] || die "http://127.0.0.1:8900/api/v1/health 连续失败（旧代码也起不来，看 journalctl -u ${UNIT}）"
+[[ "$ok" == "1" ]] || die "http://127.0.0.1:8900/api/v1/health 连续失败（旧代码也起不来，看 journalctl -u ${UNIT}.service）"
 
 # 2026-09-22 起无 Host 的 :80 是整块 410，反代要问 HTTPS 域名（与 release.sh 同）。
 log "health nginx /traj/api（HTTPS 本机 Host）"

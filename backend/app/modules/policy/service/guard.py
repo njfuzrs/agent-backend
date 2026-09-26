@@ -28,6 +28,7 @@ ALLOWED_TOP_LEVEL = frozenset(
         "disabledModes",
         "disableBypassPermissionsMode",
         "strictPluginOnlyCustomization",
+        "bridgeEnabled",
     }
 )
 
@@ -118,6 +119,12 @@ def validate_settings(settings: Any) -> dict[str, Any]:
         out["strictPluginOnlyCustomization"] = _validate_strict(
             settings["strictPluginOnlyCustomization"]
         )
+    if "bridgeEnabled" in settings:
+        # 只有 false 是约束。true 与省略同义（不关），写入时丢掉，避免空欢喜。
+        if not isinstance(settings["bridgeEnabled"], bool):
+            raise HTTPException(status_code=422, detail="bridgeEnabled 必须是 bool")
+        if settings["bridgeEnabled"] is False:
+            out["bridgeEnabled"] = False
 
     if not _has_constraint(out):
         raise HTTPException(
@@ -239,5 +246,8 @@ def _has_constraint(settings: dict[str, Any]) -> bool:
     if strict is True:
         return True
     if isinstance(strict, list) and strict:
+        return True
+    # false 是「禁止遥控」这一项约束。只关 Bridge 的策略因此不是空策略。
+    if settings.get("bridgeEnabled") is False:
         return True
     return False
