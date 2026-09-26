@@ -48,8 +48,22 @@ class SessionItem(BaseModel):
     expires_at: str
 
 
+class SessionCounts(BaseModel):
+    """首屏三个数字。全 0 也是合法首屏：没有人在被遥控。
+
+    counts 按筛选前的全集算。state / org_id 只收窄 items，
+    否则选了 paired 之后「等待中」会永远是 0，健康度看不出来。
+    """
+
+    paired: int
+    waiting: int
+    disconnect_24h: int
+
+
 class SessionListResponse(BaseModel):
     items: list[SessionItem]
+    total: int
+    counts: SessionCounts
 
 
 class DisconnectRequest(BaseModel):

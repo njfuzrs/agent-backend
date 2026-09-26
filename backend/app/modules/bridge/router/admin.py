@@ -8,7 +8,9 @@ controller token，能直接遥控别人的机器。`test_bridge_admin_requires_
 盯的就是这一点。
 """
 
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth.session import require_web_session
@@ -24,9 +26,20 @@ router = APIRouter(
 
 
 @router.get("", response_model=SessionListResponse)
-async def list_sessions(db: AsyncSession = Depends(get_db)):
-    """在线 / 等待 / 已结束。不含 token，不含 hash。"""
-    return await session_service.list_sessions(db)
+async def list_sessions(
+    state: Optional[str] = Query(default=None),
+    org_id: Optional[str] = Query(default=None),
+    device_id: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """在线 / 等待 / 已结束。不含 token，不含 hash。
+
+    state / org_id / device_id 只收窄列表。响应里的 counts 始终是全集，
+    页首三个数字不跟着下拉框变。
+    """
+    return await session_service.list_sessions(
+        db, state=state, org_id=org_id, device_id=device_id
+    )
 
 
 @router.post("/{session_id}/controller-token", response_model=SessionIssued, status_code=201)

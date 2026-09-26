@@ -406,3 +406,64 @@ def test_waiting_over_ten_minutes_is_marked_expired(client):
     assert item["state"] == "expired"
     # datetime 导入留着给断言一个可解析的时间，避免标错格式。
     datetime.fromisoformat(item["created_at"]).astimezone(timezone.utc)
+
+
+def test_list_filters_narrow_items_but_not_counts(client):
+    """筛选只收窄表。页首三个数字按全集算，否则选了 paired 就看不到 waiting。"""
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-1")
+    waiting_id = _create(client, cred, {"ver": "0.1.604", "cwd_basename": "sid-code"}).json()[
+        "session_id"
+    ]
+    paired_id = _create(client, cred).json()["session_id"]
+
+    other_code = _issue_code(client, org_id="corp-beijing", team_id=None)
+    other = _enroll(client, other_code, "dev-2", org_id="corp-beijing")
+    other_id = _create(client, other).json()["session_id"]
+
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.core import db as db_mod
+    from app.modules.bridge.model import BridgeSession
+
+    async def _pair():
+        async with db_mod.async_session() as db:
+            row = await db.execute(select(BridgeSession).where(BridgeSession.id == paired_id))
+            row.scalar_one().state = "paired"
+            await db.commit()
+
+    asyncio.run(_pair())
+
+    _login(client)
+    all_rows = client.get("/api/v1/bridge/sessions")
+    assert all_rows.status_code == 200
+    body = all_rows.json()
+    assert body["total"] == 3
+    assert body["counts"] == {"paired": 1, "waiting": 2, "disconnect_24h": 0}
+    assert "session_token" not in body["items"][0]
+
+    by_state = client.get("/api/v1/bridge/sessions", params={"state": "paired"})
+    narrowed = by_state.json()
+    assert [i["id"] for i in narrowed["items"]] == [paired_id]
+    assert narrowed["total"] == 1
+    # 选了 paired，waiting 不能跟着变成 0。
+    assert narrowed["counts"]["waiting"] == 2
+    assert narrowed["counts"]["paired"] == 1
+
+    by_org = client.get("/api/v1/bridge/sessions", params={"org_id": "corp-beijing"})
+    assert [i["id"] for i in by_org.json()["items"]] == [other_id]
+    assert by_org.json()["counts"]["waiting"] == 2
+
+    by_device = client.get("/api/v1/bridge/sessions", params={"device_id": "dev-1"})
+    assert {i["id"] for i in by_device.json()["items"]} == {waiting_id, paired_id}
+
+    gone = client.post(
+        f"/api/v1/bridge/sessions/{paired_id}/disconnect",
+        json={"reason": "验收踢人"},
+    )
+    assert gone.status_code == 204
+    after = client.get("/api/v1/bridge/sessions").json()
+    assert after["counts"]["paired"] == 0
+    assert after["counts"]["disconnect_24h"] == 1

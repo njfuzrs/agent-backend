@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate, useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { Layout, Menu, Typography, Button, Space, Spin } from 'antd'
 import {
+  ApiOutlined,
   DashboardOutlined,
   DesktopOutlined,
   DollarOutlined,
@@ -21,6 +22,7 @@ import FlagList from './modules/flag/pages/FlagList'
 import PolicyList from './modules/policy/pages/PolicyList'
 import AuditOverview from './modules/event/pages/AuditOverview'
 import CostOverview from './modules/cost/pages/CostOverview'
+import BridgeSessions from './modules/bridge/pages/BridgeSessions'
 import LoginPage from './pages/Login'
 import { checkAuth, logout } from './modules/trajectory/services/api'
 
@@ -64,7 +66,9 @@ function ProtectedLayout() {
             ? '/audit'
             : location.pathname.startsWith('/cost')
               ? '/cost'
-              : location.pathname.startsWith('/settings')
+              : location.pathname.startsWith('/bridge')
+                ? '/bridge'
+                : location.pathname.startsWith('/settings')
                 ? '/settings'
                 : '/'
 
@@ -96,6 +100,7 @@ function ProtectedLayout() {
             { key: '/policies', icon: <SafetyCertificateOutlined />, label: '策略' },
             { key: '/audit', icon: <AuditOutlined />, label: '审计' },
             { key: '/cost', icon: <DollarOutlined />, label: '成本' },
+            { key: '/bridge', icon: <ApiOutlined />, label: '遥控' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
@@ -126,6 +131,7 @@ function App() {
         <Route path="/policies" element={<PolicyList />} />
         <Route path="/audit" element={<AuditOverview />} />
         <Route path="/cost" element={<CostOverview />} />
+        <Route path="/bridge" element={<BridgeSessions />} />
         <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         <Route path="/compare" element={<Navigate to="/" replace />} />
         <Route path="/compare/:groupId" element={<Navigate to="/" replace />} />
