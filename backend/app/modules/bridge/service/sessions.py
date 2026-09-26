@@ -43,7 +43,8 @@ from app.modules.identity.service.secrets import hash_secret
 
 logger = get_logger("agent.bridge")
 
-# 本地缺省。生产必须配 BRIDGE_WS_PUBLIC_URL，否则远程客户端会去连自己的回环。
+# 本地缺省。只在 STORAGE_BACKEND=local 时使用。
+# 生产（oss）留空必须拒绝签发，否则远程客户端会去连自己的回环，还拿到 201。
 _LOCAL_WS_URL = "ws://127.0.0.1:8901/api/v1/bridge/ws"
 
 # 展示字段的长度上限。超了截断而不是 422：这是客户端自报的装饰信息，
@@ -57,17 +58,23 @@ def public_ws_url() -> str:
 
     不从请求的 Host 猜。M3 踩过「HTTP 301 把 POST 降成 GET」，WS 被 301 更糟。
     配了非 wss、又不是回环的地址直接拒绝签发：发错比不发更危险。
+
+    空配置只在本地开发回落到回环。生产（STORAGE_BACKEND=oss）必须显式配置：
+    2026-09-26 线上验收里，缺省回环让签发 201，远程客户端去连自己的机器。
     """
     configured = (settings.control_plane.BRIDGE_WS_PUBLIC_URL or "").strip()
+    if not configured and settings.storage.STORAGE_BACKEND != "local":
+        _reject_ws_url("bridge ws url missing in non-local deployment")
     url = configured or _LOCAL_WS_URL
     if not _url_is_safe(url):
-        logger.error(
-            "bridge ws url rejected",
-            event="bridge_ws_url_rejected",
-            outcome="error",
-        )
-        raise HTTPException(status_code=500, detail="bridge ws url misconfigured")
+        _reject_ws_url("bridge ws url rejected")
     return url
+
+
+def _reject_ws_url(message: str) -> None:
+    """拒绝签发。detail 给人看，不带配置值——配错的 URL 可能含 token。"""
+    logger.error(message, event="bridge_ws_url_rejected", outcome="error")
+    raise HTTPException(status_code=500, detail="bridge ws url misconfigured")
 
 
 def _url_is_safe(url: str) -> bool:

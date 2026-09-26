@@ -68,7 +68,8 @@ class ControlPlaneSettings(BaseSettings):
 
     # 遥控中继的对外地址，原样放进签发响应。不从请求 Host 猜：
     # 猜错会让远程客户端去连一个 301 之后的地址，握手直接失败。
-    # 留空时用本机 sidecar 的回环地址，只够本地开发。
+    # 留空时：STORAGE_BACKEND=local（本地开发）用本机 sidecar 的回环地址；
+    # STORAGE_BACKEND=oss（生产）必须显式配置，否则签发 500，不发回环地址。
     # 生产必须配 wss://www.sid-code.cc/traj/api/v1/bridge/ws。
     BRIDGE_WS_PUBLIC_URL: str = ""
 
