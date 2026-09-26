@@ -277,6 +277,7 @@ def test_public_url_must_be_wss_or_loopback(client, monkeypatch):
     cred = _enroll(client, code, "dev-1")
     resp = _create(client, cred)
     assert resp.status_code == 500, resp.text
+    assert "127.0.0.1" not in resp.text
 
     monkeypatch.setattr(
         settings.control_plane,
@@ -285,7 +286,34 @@ def test_public_url_must_be_wss_or_loopback(client, monkeypatch):
     )
     resp = _create(client, cred)
     assert resp.status_code == 201
-    assert resp.json()["ws_url"].startswith("wss://")
+    assert resp.json()["ws_url"] == "wss://www.sid-code.cc/traj/api/v1/bridge/ws"
+
+
+def test_oss_without_public_url_does_not_issue_loopback(client, monkeypatch):
+    """生产形态（STORAGE_BACKEND=oss）漏配公开地址时不得 201 回环。
+
+    2026-09-26 线上验收：空配置回落到 127.0.0.1，远程客户端去连自己的机器。
+    本地开发仍是 local，空配置继续回环，见 test_create_returns_token_once。
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings.storage, "STORAGE_BACKEND", "oss")
+    monkeypatch.setattr(settings.control_plane, "BRIDGE_WS_PUBLIC_URL", "")
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-1")
+    resp = _create(client, cred)
+    assert resp.status_code == 500, resp.text
+    assert resp.json()["detail"] == "bridge ws url misconfigured"
+    assert "127.0.0.1" not in resp.text
+
+    monkeypatch.setattr(
+        settings.control_plane,
+        "BRIDGE_WS_PUBLIC_URL",
+        "wss://www.sid-code.cc/traj/api/v1/bridge/ws",
+    )
+    ok = _create(client, cred)
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["ws_url"] == "wss://www.sid-code.cc/traj/api/v1/bridge/ws"
 
 
 # ---------------------------------------------------------------------------
