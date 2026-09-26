@@ -401,6 +401,7 @@ export default function PolicyList() {
             设备有一份就看不到组织那份。空策略不允许（会盖掉员工本地 managed）。
             policyLimits 只有 mcp / sub_agent / custom_commands / extensions 真拦。
             「变更原因」进审计；用户看到的是各功能的禁用理由。按设备 ID 筛：层选设备，对象填 device_id。
+            「禁止 Bridge 远程控制」省略等于不关；打开才写入 bridgeEnabled: false，关是施加约束，保存仍要原因。
           </span>
         }
       />

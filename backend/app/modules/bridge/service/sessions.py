@@ -26,6 +26,7 @@ from app.core.logging import current_request_id, get_logger
 from app.core.timeutil import is_expired, utc_now, utc_now_iso
 from app.modules.bridge.model import BridgeAudit, BridgeSession, BridgeSessionToken
 from app.modules.bridge.schemas import (
+    SessionCounts,
     SessionIssued,
     SessionItem,
     SessionListResponse,
@@ -271,29 +272,79 @@ async def whoami(db: AsyncSession, ctx: DeviceContext) -> SessionWhoami:
     )
 
 
-async def list_sessions(db: AsyncSession) -> SessionListResponse:
+async def list_sessions(
+    db: AsyncSession,
+    *,
+    state: Optional[str] = None,
+    org_id: Optional[str] = None,
+    device_id: Optional[str] = None,
+) -> SessionListResponse:
     """管理台列表。顺手把等太久还没配对的标成 expired。
 
     懒标记：不另起 cron。握手时仍按 expires_at 拒绝，这里只影响列表看到的状态。
+
+    state / org_id / device_id 只收窄 items。counts 按筛选前的全集算：
+    页首三个数字回答的是「通道健康吗」，不是「当前这一筛剩下几条」。
     """
     await _expire_stale_waiting(db)
-    rows = await db.execute(
-        select(BridgeSession).order_by(BridgeSession.created_at.desc()).limit(200)
+    filters = []
+    if state:
+        filters.append(BridgeSession.state == state)
+    if org_id:
+        filters.append(BridgeSession.org_id == org_id)
+    if device_id:
+        filters.append(BridgeSession.device_id == device_id)
+    stmt = select(BridgeSession).order_by(BridgeSession.created_at.desc()).limit(200)
+    if filters:
+        stmt = stmt.where(*filters)
+    rows = await db.execute(stmt)
+    items = [_session_item(s) for s in rows.scalars()]
+    return SessionListResponse(
+        items=items,
+        total=len(items),
+        counts=await _session_counts(db),
     )
-    items = [
-        SessionItem(
-            id=s.id,
-            device_id=s.device_id,
-            org_id=s.org_id,
-            state=s.state,
-            ver=s.ver,
-            cwd_basename=s.cwd_basename,
-            created_at=s.created_at,
-            expires_at=s.expires_at,
+
+
+def _session_item(session: BridgeSession) -> SessionItem:
+    return SessionItem(
+        id=session.id,
+        device_id=session.device_id,
+        org_id=session.org_id,
+        state=session.state,
+        ver=session.ver,
+        cwd_basename=session.cwd_basename,
+        created_at=session.created_at,
+        expires_at=session.expires_at,
+    )
+
+
+async def _session_counts(db: AsyncSession) -> SessionCounts:
+    """在线数现算；强制断开数读审计，不从 state 倒推。
+
+    正常断开也会把 state 写成 disconnected（对端先走）。页首要的是
+    「有人在踢人」，只有 action=disconnect 的审计行算。
+    """
+    rows = await db.execute(
+        select(BridgeSession.state, func.count())
+        .where(BridgeSession.state.in_(ONLINE_STATES))
+        .group_by(BridgeSession.state)
+    )
+    by_state = {state: count for state, count in rows}
+    cutoff = (utc_now() - timedelta(hours=24)).isoformat()
+    disconnects = await db.execute(
+        select(func.count())
+        .select_from(BridgeAudit)
+        .where(
+            BridgeAudit.action == "disconnect",
+            BridgeAudit.created_at >= cutoff,
         )
-        for s in rows.scalars()
-    ]
-    return SessionListResponse(items=items)
+    )
+    return SessionCounts(
+        paired=by_state.get("paired", 0),
+        waiting=by_state.get("waiting", 0),
+        disconnect_24h=disconnects.scalar_one(),
+    )
 
 
 async def record_auth_failure(db: AsyncSession, session_id: Optional[str]) -> None:

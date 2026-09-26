@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -16,6 +16,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
+import { fetchBridgeSessions } from '../../bridge/services/api'
 import {
   createEnrollCode,
   fetchDevices,
@@ -48,6 +49,17 @@ export default function DeviceList() {
     queryKey: ['identity-enroll-codes'],
     queryFn: fetchEnrollCodes,
   })
+
+  // 只要 paired。waiting 还没有人在遥控，不点绿。
+  const { data: bridge } = useQuery({
+    queryKey: ['bridge-sessions', { state: 'paired' }],
+    queryFn: () => fetchBridgeSessions({ state: 'paired' }),
+    refetchInterval: 15_000,
+  })
+  const pairedDevices = useMemo(
+    () => new Set((bridge?.items ?? []).map(item => item.device_id)),
+    [bridge?.items],
+  )
 
   const issueMutation = useMutation({
     mutationFn: createEnrollCode,
@@ -111,9 +123,31 @@ export default function DeviceList() {
     {
       title: '状态',
       key: 'status',
-      width: 90,
-      render: (_value, record) =>
-        record.revoked ? <Tag color="red">已吊销</Tag> : <Tag color="green">有效</Tag>,
+      width: 150,
+      render: (_value, record) => (
+        <Space size={4}>
+          {record.revoked ? <Tag color="red">已吊销</Tag> : <Tag color="green">有效</Tag>}
+          {pairedDevices.has(record.device_id) && (
+            <Button
+              type="link"
+              style={{ padding: 0 }}
+              onClick={() => navigate(`/bridge?device_id=${encodeURIComponent(record.device_id)}`)}
+            >
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: '#52c41a',
+                  marginRight: 4,
+                }}
+              />
+              遥控中
+            </Button>
+          )}
+        </Space>
+      ),
     },
     {
       title: '操作',
