@@ -1,14 +1,16 @@
-"""人员身份 ORM：users / auth_states / auth_audit。
+"""人员身份 ORM：users / auth_states / login_codes / auth_audit。
 
 - users：一人一行。主键之外的唯一键是 (provider, tenant_key, union_id)。
   email 只作展示，不当身份（飞书侧可以改、可以没有）。
 - auth_states：OAuth state 只存 sha256，一次性使用（UPDATE ... WHERE used_at IS NULL）。
   同时存浏览器 nonce 的 hash，防登录 CSRF（方案 §5.7）。PKCE verifier 不落库，
   由签名密钥从 state 派生（见 service/states.py）。
+- login_codes：CLI 登录（P2）callback 签发的一次性码，60 秒、只存 hash，
+  绑定 user + device_id + CLI 的 PKCE challenge。兑换时校验 verifier。
 - auth_audit：只追加。user_id 不建外键：用户行删了，审计仍要能回答「谁登录过」。
 """
 
-from sqlalchemy import Column, Index, Integer, Text, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, Index, Integer, Text, UniqueConstraint
 
 from app.core.db import Base
 
@@ -42,7 +44,11 @@ class User(Base):
 
 
 class AuthState(Base):
-    """一次 OAuth 往返的 state。kind=web 是管理台；P2 的 CLI 流程会加 kind=cli 与相关列。"""
+    """一次 OAuth 往返的 state。kind=web 是管理台，kind=cli 是 sid-code 登录（P2）。
+
+    cli_* 与 device_id 只在 kind=cli 时有值。cli_state 是 CLI 自己生成的随机串，
+    原样回传给 CLI 供它防登录 CSRF，对服务端不是秘密，明文存。
+    """
 
     __tablename__ = "auth_states"
 
@@ -51,11 +57,29 @@ class AuthState(Base):
     nonce_hash = Column(Text, nullable=False)
     # 登录完成后跳回的管理台路径。只存以 / 开头的站内路径，入库前已校验。
     redirect_to = Column(Text, nullable=False, default="/")
+    cli_port = Column(Integer, nullable=True)
+    cli_challenge = Column(Text, nullable=True)
+    cli_state = Column(Text, nullable=True)
+    device_id = Column(Text, nullable=True)
     created_at = Column(Text, nullable=False)
     expires_at = Column(Text, nullable=False)
     used_at = Column(Text, nullable=True)
 
     __table_args__ = (Index("idx_auth_states_expires_at", "expires_at"),)
+
+
+class LoginCode(Base):
+    __tablename__ = "login_codes"
+
+    code_hash = Column(Text, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE", name="fk_login_codes_user_id"), nullable=False)
+    device_id = Column(Text, nullable=False)
+    cli_challenge = Column(Text, nullable=False)
+    created_at = Column(Text, nullable=False)
+    expires_at = Column(Text, nullable=False)
+    used_at = Column(Text, nullable=True)
+
+    __table_args__ = (Index("idx_login_codes_expires_at", "expires_at"),)
 
 
 class AuthAudit(Base):

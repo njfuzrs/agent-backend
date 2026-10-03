@@ -27,6 +27,7 @@ class WhoAmIResponse(BaseModel):
     org_id: str
     team_id: str = ""
     user_id: str = ""
+    user_ref: Optional[int] = None
 
 
 class OrganizationCreate(BaseModel):
@@ -84,6 +85,7 @@ class DeviceListItem(BaseModel):
     org_id: str
     team_id: str = ""
     user_id: str = ""
+    user_ref: Optional[int] = None
     platform: str = ""
     ver: str = ""
     last_seen_at: Optional[str] = None

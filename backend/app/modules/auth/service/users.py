@@ -20,6 +20,7 @@ from app.modules.auth.model import (
     User,
 )
 from app.modules.auth.service.feishu import FeishuUser
+from app.modules.identity.service import login as device_login
 
 logger = get_logger("agent.auth.users")
 
@@ -33,6 +34,12 @@ EVENT_REVOKE = "revoke"
 EVENT_RESTORE = "restore"
 EVENT_ROLE_CHANGE = "role_change"
 EVENT_LOGIN_REJECTED = "login_rejected"
+# CLI 登录（P2）：callback 签发登录码记 cli_login，兑换出设备凭据记 cli_exchange，
+# 设备已归别人记 cli_conflict，CLI 主动登出记 cli_logout。
+EVENT_CLI_LOGIN = "cli_login"
+EVENT_CLI_EXCHANGE = "cli_exchange"
+EVENT_CLI_CONFLICT = "cli_conflict"
+EVENT_CLI_LOGOUT = "cli_logout"
 
 
 def audit(
@@ -100,6 +107,12 @@ async def upsert_feishu_user(db: AsyncSession, info: FeishuUser) -> User:
     return user
 
 
+async def get_user(db: AsyncSession, user_id: Optional[int]) -> Optional[User]:
+    if user_id is None:
+        return None
+    return await db.get(User, user_id)
+
+
 async def list_users(db: AsyncSession) -> list[User]:
     rows = await db.execute(select(User).order_by(User.id))
     return list(rows.scalars())
@@ -140,7 +153,9 @@ async def set_role(db: AsyncSession, user_id: int, role: str, *, actor: str, act
 async def set_status(db: AsyncSession, user_id: int, revoked: bool, *, actor: str, actor_user_id: Optional[int]) -> User:
     """吊销 / 恢复。吊销后该用户已有会话的下一次请求即 401（read_session 每次查 status）。
 
-    P2 之后吊销还要连带吊销其设备凭据、删除飞书 token（方案 §6.5），那时在这个事务里补。
+    吊销同一个事务里连带吊销他名下全部设备凭据（P2），CLI 下一次请求即 401。
+    恢复**不**恢复凭据：旧凭据已经作废，本人重新 `sid-code auth login` 即可。
+    飞书 token 要到 P4 才落库，那时在这里一并删。
     """
     user = await _get_user_or_404(db, user_id)
     target = STATUS_REVOKED if revoked else STATUS_ACTIVE
@@ -150,7 +165,10 @@ async def set_status(db: AsyncSession, user_id: int, revoked: bool, *, actor: st
         raise HTTPException(status_code=409, detail="cannot revoke yourself")
     user.status = target
     user.updated_at = utc_now_iso()
-    audit(db, event=EVENT_REVOKE if revoked else EVENT_RESTORE, actor=actor, user_id=user.id)
+    detail = None
+    if revoked:
+        detail = {"credentials_revoked": await device_login.revoke_user_devices(db, user.id)}
+    audit(db, event=EVENT_REVOKE if revoked else EVENT_RESTORE, actor=actor, user_id=user.id, detail=detail)
     await db.commit()
     logger.info(
         "admin write",

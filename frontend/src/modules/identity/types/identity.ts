@@ -29,6 +29,7 @@ export type DeviceListItem = {
   org_id: string
   team_id: string
   user_id: string
+  user_ref: number | null
   platform: string
   ver: string
   last_seen_at: string | null

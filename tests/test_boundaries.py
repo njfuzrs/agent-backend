@@ -977,6 +977,10 @@ AUTH_PUBLIC_ROUTES = {
     ("GET", "/api/v1/auth/feishu/start"),
     # 飞书回调：凭 state（一次性、10 分钟）+ nonce cookie + PKCE 授予会话。
     ("GET", "/api/v1/auth/feishu/callback"),
+    # CLI 登录起点（P2）：参数校验后建 kind=cli 的 state，302 到飞书。回跳只去 127.0.0.1:<port>。
+    ("GET", "/api/v1/auth/feishu/cli/start"),
+    # CLI 兑换（P2）：凭一次性登录码（60 秒）+ PKCE verifier 换设备凭据。还没有凭据才来这里。
+    ("POST", "/api/v1/auth/cli/exchange"),
 }
 
 
@@ -989,10 +993,12 @@ def test_auth_public_routes_are_whitelisted():
 
     假门禁对策：给 login.py 加一个不挂依赖的 GET /auth/debug 必须红。
     """
+    from app.core.auth.control_plane import require_device
     from app.core.auth.session import require_session, require_web_session
     from app.main import app
 
-    session_deps = {require_session, require_web_session}
+    # require_device：CLI 登出（/auth/cli/logout）凭设备凭据，不是免鉴权入口。
+    session_deps = {require_session, require_web_session, require_device}
     actual = set()
     offenders = []
     for path, methods, dependant in _iter_app_routes(app):
@@ -1018,6 +1024,28 @@ def test_feishu_callback_not_under_ctl():
     for path, _methods, _dep in _iter_app_routes(app):
         if "feishu" in path and "/auth/" in path:
             assert "/ctl/" not in path, f"{path} 不该在 /ctl/ 下"
+
+
+def test_cli_logout_requires_device():
+    """/auth/cli/logout 必须挂 require_device：它会吊销凭据并解绑设备，漏挂等于谁都能把人踢下线。"""
+    from app.core.auth.control_plane import require_device
+    from app.main import app
+
+    seen = False
+    for path, methods, dependant in _iter_app_routes(app):
+        if path == "/api/v1/auth/cli/logout":
+            seen = True
+            assert require_device in _route_deps(dependant), f"{sorted(methods)} {path} 没挂 require_device"
+    assert seen, "CLI 登出端点不见了"
+
+
+def test_cli_redirect_host_is_loopback_literal():
+    """CLI 回跳地址主机写死 127.0.0.1，唯一变量是整数端口（方案 §5.2，杜绝开放重定向）。"""
+    from app.modules.auth.service import states
+
+    assert states.cli_redirect_url(43123) == "http://127.0.0.1:43123/callback"
+    for bad in (0, 80, 1023, 65536, -1):
+        assert states.validate_cli_params(bad, "a" * 43, "s" * 16, "dev") is None
 
 
 def test_users_admin_requires_web_session():

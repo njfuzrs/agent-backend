@@ -47,6 +47,9 @@ class DeviceContext:
     org_id: str
     team_id: str = ""
     user_id: str = ""
+    # 设备归属的人（users.id），由 CLI 登录在服务端写入。None = 未登录（注册码设备）。
+    # 与自报的 user_id 不同，这一项可信（方案 §5.6）。
+    user_ref: Optional[int] = None
 
 
 async def require_device(request: Request) -> DeviceContext:
@@ -94,6 +97,7 @@ async def require_device(request: Request) -> DeviceContext:
             org_id=device.organization.org_id,
             team_id=device.team.team_id if device.team is not None else "",
             user_id=device.user_id or "",
+            user_ref=device.user_ref,
         )
         # 通过之后才写。鉴权失败的请求不带这两个字段，这是对的：
         # 失败靠 reason 而不是设备标识（方案 §3.4，已裁决）。
