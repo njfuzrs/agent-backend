@@ -222,6 +222,21 @@ def test_state_from_another_browser_is_rejected(client):
     assert client.calls["exchange"] == []
 
 
+def test_start_on_other_host_bounces_to_canonical_host(client):
+    """从 sid-code.cc 发起、回调落在 www.sid-code.cc：nonce cookie 按主机隔离，回调必然带不上。
+    start 必须先把浏览器送到 PUBLIC_BASE_URL 的主机上，再建 state、下发 nonce。"""
+    resp = client.get(
+        "https://other.example.test/api/v1/auth/feishu/start",
+        params={"redirect": "/devices"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "https://example.test/traj/api/v1/auth/feishu/start?redirect=%2Fdevices"
+    assert "traj_login_nonce" not in resp.headers.get("set-cookie", "")
+    with _db(client) as conn:
+        assert conn.execute("SELECT count(*) FROM auth_states").fetchone()[0] == 0
+
+
 def test_unknown_state_is_rejected(client):
     _start(client)
     assert _error_of(_callback(client, code=f"{ADMIN_UNION}@{TENANT}", state="forged")) == "invalid_state"
