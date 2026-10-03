@@ -8,6 +8,7 @@ export type UserItem = {
   status: 'active' | 'revoked'
   created_at: string
   last_login_at: string | null
+  device_count: number
 }
 
 export type AuthAuditItem = {

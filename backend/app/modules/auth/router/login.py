@@ -15,6 +15,9 @@
         → upsert 用户（新人是 member）→ 被吊销则拒绝 → 签发会话 → 302 回管理台
 
 失败一律 302 回 /login?error=<枚举>，不签发会话。错误枚举见 LOGIN_ERRORS。
+
+callback 与 CLI 登录（router/cli.py）共用：state.kind=cli 时不签会话，改签一次性登录码
+并 302 回 http://127.0.0.1:<port>/callback；state 通过之后的失败也回 CLI（?error=<同一枚举>）。
 """
 
 from urllib.parse import urlencode, urlsplit
@@ -55,6 +58,36 @@ LOGIN_ERRORS = (
     "tenant_mismatch",  # 不是 FEISHU_TENANT_KEY 指定的租户
     "revoked",  # 用户已被管理员吊销
 )
+
+
+def set_nonce_cookie(resp: Response, nonce: str) -> None:
+    """web 与 CLI 两条流程共用。CLI 打开的浏览器同样要绑定 state，防登录 CSRF。"""
+    resp.set_cookie(
+        key=states.NONCE_COOKIE,
+        value=nonce,
+        max_age=states.STATE_TTL_MINUTES * 60,
+        httponly=True,
+        # Lax：从飞书授权页回跳是顶层 GET 导航，会带上 cookie；跨站 POST 不带。
+        samesite="lax",
+        secure=settings.data_plane.SESSION_COOKIE_SECURE,
+        path="/",
+    )
+
+
+def _cli_page(auth_state, *, error: str = "", reason: str = "", code: str = "") -> RedirectResponse:
+    """回跳 CLI 本地回调。主机写死 127.0.0.1，端口来自 state 行（start 时已校验）。
+
+    失败也回 CLI（带 ?error=），让终端立刻知道结果，而不是干等到超时。
+    """
+    params = {"state": auth_state.cli_state or ""}
+    if code:
+        params["code"] = code
+    else:
+        params["error"] = error
+        auth_logger.warning("credential rejected", event="auth_rejected", reason=reason)
+    resp = RedirectResponse(f"{states.cli_redirect_url(auth_state.cli_port)}?{urlencode(params)}", status_code=302)
+    resp.delete_cookie(states.NONCE_COOKIE, path="/")
+    return resp
 
 
 def _login_page(error: str) -> RedirectResponse:
@@ -149,16 +182,7 @@ async def feishu_start(
     state, nonce = await states.create_state(db, redirect)
     url = feishu.authorize_url(state, states.pkce_challenge(states.pkce_verifier(state)))
     resp = RedirectResponse(url, status_code=302)
-    resp.set_cookie(
-        key=states.NONCE_COOKIE,
-        value=nonce,
-        max_age=states.STATE_TTL_MINUTES * 60,
-        httponly=True,
-        # Lax：从飞书授权页回跳是顶层 GET 导航，会带上 cookie；跨站 POST 不带。
-        samesite="lax",
-        secure=settings.data_plane.SESSION_COOKIE_SECURE,
-        path="/",
-    )
+    set_nonce_cookie(resp, nonce)
     return resp
 
 
@@ -175,18 +199,24 @@ async def feishu_callback(
 
     auth_state = await states.consume_state(db, state, request.cookies.get(states.NONCE_COOKIE))
     if auth_state is None:
+        # state 不可信，连 CLI 的端口都不可信：一律回管理台登录页。
         return _reject("state_rejected", "invalid_state")
+    is_cli = auth_state.kind == states.KIND_CLI
+
+    def fail(reason: str, err: str) -> RedirectResponse:
+        return _cli_page(auth_state, error=err, reason=reason) if is_cli else _reject(reason, err)
+
     if error:
         # 用户拒绝授权不是攻击，但也没有身份可签发。state 已消费，不能重放。
-        return _reject("feishu_denied", "access_denied")
+        return fail("feishu_denied", "access_denied")
     if not code:
-        return _reject("state_rejected", "invalid_state")
+        return fail("state_rejected", "invalid_state")
 
     try:
         access_token = await feishu.exchange_code(code, states.pkce_verifier(state))
         info = await feishu.fetch_user_info(access_token)
     except feishu.FeishuError:
-        return _reject("feishu_failed", "feishu_failed")
+        return fail("feishu_failed", "feishu_failed")
     # P1 不保存 token：登录只为拿身份。显式丢掉引用，免得后来人顺手存了。
     del access_token
 
@@ -197,7 +227,7 @@ async def feishu_callback(
             detail={"reason": "tenant_mismatch"},
         )
         await db.commit()
-        return _reject("tenant_mismatch", "tenant_mismatch")
+        return fail("tenant_mismatch", "tenant_mismatch")
 
     user = await users_service.upsert_feishu_user(db, info)
     if user.status != STATUS_ACTIVE:
@@ -206,9 +236,22 @@ async def feishu_callback(
             user_id=user.id, detail={"reason": "revoked"},
         )
         await db.commit()
-        return _reject("user_revoked", "revoked")
+        return fail("user_revoked", "revoked")
 
     user.last_login_at = utc_now_iso()
+    if is_cli:
+        # CLI：不签会话 cookie，签 60 秒一次性登录码，回跳 127.0.0.1。
+        login_code = await states.create_login_code(
+            db, user_id=user.id, device_id=auth_state.device_id, challenge=auth_state.cli_challenge
+        )
+        users_service.audit(
+            db, event=users_service.EVENT_CLI_LOGIN, actor=f"user:{user.union_id}", user_id=user.id,
+            detail={"device_id": auth_state.device_id},
+        )
+        await db.commit()
+        logger.info("cli login code issued", event="cli_login_code", target_id=str(user.id))
+        return _cli_page(auth_state, code=login_code)
+
     users_service.audit(
         db, event=users_service.EVENT_LOGIN, actor=f"user:{user.union_id}", user_id=user.id,
         detail={"role": user.role},

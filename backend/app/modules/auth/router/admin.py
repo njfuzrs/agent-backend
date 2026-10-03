@@ -15,6 +15,7 @@ from app.modules.auth.schemas import (
     UserRoleUpdate,
 )
 from app.modules.auth.service import users as users_service
+from app.modules.identity.service import login as device_login
 
 router = APIRouter(
     prefix="/users",
@@ -23,7 +24,7 @@ router = APIRouter(
 )
 
 
-def _item(user) -> UserItem:
+def _item(user, device_count: int = 0) -> UserItem:
     return UserItem(
         id=user.id,
         provider=user.provider,
@@ -34,12 +35,14 @@ def _item(user) -> UserItem:
         status=user.status,
         created_at=user.created_at,
         last_login_at=user.last_login_at,
+        device_count=device_count,
     )
 
 
 @router.get("", response_model=UserListResponse)
 async def list_users(db: AsyncSession = Depends(get_db)):
-    return UserListResponse(items=[_item(u) for u in await users_service.list_users(db)])
+    counts = await device_login.device_counts_by_user(db)
+    return UserListResponse(items=[_item(u, counts.get(u.id, 0)) for u in await users_service.list_users(db)])
 
 
 @router.get("/audit", response_model=AuthAuditListResponse)

@@ -25,6 +25,7 @@ logger = get_logger("agent")
 
 from app.core.middleware import RequestContextMiddleware
 from app.modules.auth.router import admin as users_admin
+from app.modules.auth.router import cli as auth_cli
 from app.modules.auth.router import login as auth_login
 from app.modules.bridge.router import admin as bridge_admin
 from app.modules.bridge.router import serve as bridge_serve
@@ -108,6 +109,7 @@ install_exception_handlers(app)
 # ---- 管理台登录：飞书 OAuth + 口令应急入口（凭据不进 localStorage，见 §PR-0.5）----
 # 全部是免鉴权入口，由 test_boundaries 的 AUTH_PUBLIC_ROUTES 逐条登记。
 app.include_router(auth_login.router, prefix="/api/v1")
+app.include_router(auth_cli.router, prefix="/api/v1")
 # 就绪检查。不进冻结区、不挂鉴权、不探 OSS（方案 §3.8）。
 app.include_router(ready_router, prefix="/api/v1")
 

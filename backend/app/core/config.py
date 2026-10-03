@@ -65,6 +65,8 @@ class ControlPlaneSettings(BaseSettings):
     CTL_CREDENTIAL_TTL_DAYS: int = 90
     # 一次性注册码有效期（小时）。签发是授予信任，码本身也应短命。
     CTL_ENROLL_CODE_TTL_HOURS: int = 24
+    # CLI 飞书登录（P2）新建设备时落进的组织 slug，不存在就建。老设备保留原组织。
+    CTL_LOGIN_ORG_ID: str = "default"
 
     # 遥控中继的对外地址，原样放进签发响应。不从请求 Host 猜：
     # 猜错会让远程客户端去连一个 301 之后的地址，握手直接失败。

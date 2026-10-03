@@ -167,6 +167,10 @@ async def _upsert_device(
 
     if device.organization_id != org.id:
         raise HTTPException(status_code=409, detail="device already enrolled in another org")
+    # 已由飞书登录绑定到人的设备，不许用注册码覆盖：否则拿到一个注册码、知道别人的
+    # device_id，就能吊销对方凭据把人踢下线（方案 §5.2）。要换走 `sid-code auth logout`。
+    if device.user_ref is not None:
+        raise HTTPException(status_code=409, detail="device is bound to a user; run `sid-code auth logout` first")
 
     device.team_id = team.id if team is not None else device.team_id
     if payload.user_id:

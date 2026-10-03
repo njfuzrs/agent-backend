@@ -80,9 +80,9 @@ agent-backend/
 │   │       │   ├── router/     # ingest（POST /usage/ledger）/ serve（GET /ctl/budget）/ admin
 │   │       │   └── service/    # ingest（upsert）/ budgets（求值+CRUD）/ queries / guard
 │   │       └── auth/           # 模块七：管理台飞书登录与人员身份（P1）
-│   │           ├── model.py    # users / auth_states / auth_audit
+│   │           ├── model.py    # users / auth_states / login_codes / auth_audit
 │   │           ├── schemas.py
-│   │           ├── router/     # login（/auth/**：options / login / logout / me / feishu start+callback）/ admin（/users/**）
+│   │           ├── router/     # login（/auth/**：options / login / logout / me / feishu start+callback）/ cli（P2：feishu/cli/start、cli/exchange、cli/logout）/ admin（/users/**）
 │   │           └── service/    # feishu（OAuth HTTP）/ states（state+nonce+PKCE）/ users（upsert / 角色 / 吊销 / 审计）
 │   └── requirements.txt
 ├── frontend/               # React 前端
@@ -133,6 +133,7 @@ agent-backend/
 - **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`（签发入口 `/ctl/enroll` 除外走一次性注册码；`GET /ctl/flags` 是客户端裸 fetch 的有意豁免）。`GET /ctl/policy` **必须**挂 `require_device`，不要加进豁免名单。`POST /api/v1/events` 与 `POST /api/v1/usage/ledger` 数据面方向、控制面鉴权，**不在 `/ctl/` 下**，现有门禁 ② 扫不到，由 `test_events_ingest_requires_device` / `test_usage_ledger_ingest_requires_device` 专门盯。`GET /ctl/budget` 虽在 `/ctl/` 下，仍另有 `test_budget_serve_requires_device` 盯豁免名单。由边界测试反射检查
 - **管理台凭据不落 localStorage**：独立登录页走 `/api/v1/auth/login` 下发 HttpOnly + SameSite cookie（无状态 HMAC 签名，跨 worker 有效）。未登录或 401 跳 `/login`。Basic Auth 保留给脚本与 curl
 - **管理台登录 = 飞书优先 + 口令应急**（`modules/auth/`）：`/auth/feishu/start` → 飞书 → `/auth/feishu/callback`，state 只存 hash、一次性、10 分钟，并与 HttpOnly nonce cookie 绑定（防登录 CSRF），PKCE S256。角色只有 admin / member：新用户是 member，所有管理接口 403；admin 由 `ADMIN_BOOTSTRAP_UNION_IDS` 引导、之后在「用户」页授予。飞书会话每次请求按主键查 `users.status/role`，吊销下一次请求即 401。口令登录由 `AUTH_PASSWORD_LOGIN_ENABLED`（默认 true）控制，关掉后 `/auth/login` 404、已有口令会话失效，每次口令登录写 `break_glass` 审计。P1 **不存**飞书 token（P4 才加密落库）。`/auth/**` 的免鉴权入口由 `test_boundaries.py` 的 `AUTH_PUBLIC_ROUTES` 白名单锁定
+- **CLI 飞书登录（P2）**：`GET /auth/feishu/cli/start` 建 kind=cli 的 state（记 CLI 端口 / PKCE challenge / cli_state / device_id），共用 `/auth/feishu/callback`，按 kind 分流：cli 签 60 秒一次性登录码（`login_codes`，只存 hash）并 302 回 `http://127.0.0.1:<port>/callback`（主机写死，只有端口可变）。`POST /auth/cli/exchange` 校验码 + S256(verifier) + device_id 后签设备凭据并写 `devices.user_ref`；设备已绑给另一个在职用户返回 409（不吊销对方），注册码也不能覆盖已绑人的设备。`POST /auth/cli/logout` 挂 `require_device`，吊销并解绑。吊销用户在同一事务里吊销其名下全部设备凭据。归因只认 `user_ref`，自报的 `devices.user_id` 不可信。P2 同样不存飞书 token
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400
 - **文件格式兼容**：读取时自动尝试 `.gz` 和非 `.gz` 格式，兼容迁移前的旧数据
@@ -165,7 +166,7 @@ cd frontend && pnpm run build
 
 # 门禁自查（提交前跑一遍）
 cd backend && ruff check . && alembic check          # lint + schema 漂移
-python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_cost.py ../tests/test_deploy_scripts.py -v  # 边界 + 身份 + flag + policy + event + cost + 发版脚本
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_cost.py ../tests/test_auth_login.py ../tests/test_auth_cli.py ../tests/test_deploy_scripts.py -v  # 边界 + 身份 + flag + policy + event + cost + 登录 + 发版脚本
 
 # 数据库迁移
 cd backend && alembic upgrade head                   # 本地：建库/升级

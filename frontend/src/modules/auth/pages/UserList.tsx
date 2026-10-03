@@ -19,6 +19,10 @@ const EVENT_LABELS: Record<string, string> = {
   restore: '恢复',
   role_change: '改角色',
   login_rejected: '登录被拒',
+  cli_login: 'CLI 飞书授权',
+  cli_exchange: 'CLI 登录',
+  cli_conflict: 'CLI 设备冲突',
+  cli_logout: 'CLI 登出',
 }
 
 function errorDetail(err: unknown): string {
@@ -87,6 +91,7 @@ export default function UserList() {
       dataIndex: 'status',
       render: (s: UserItem['status']) => (s === 'active' ? <Tag color="green">正常</Tag> : <Tag color="red">已吊销</Tag>),
     },
+    { title: '设备', dataIndex: 'device_count' },
     { title: '最近登录', dataIndex: 'last_login_at', render: formatTs },
     { title: '首次登录', dataIndex: 'created_at', render: formatTs },
     {

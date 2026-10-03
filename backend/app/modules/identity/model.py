@@ -50,7 +50,13 @@ class Device(Base):
     device_id = Column(Text, nullable=False, unique=True, index=True)  # 客户端持久 UUIDv4
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    # 客户端自报，不可信，只作展示。归因看 user_ref。
     user_id = Column(Text, nullable=False, default="")
+    # 设备归属的人（users.id）。只由 CLI 登录兑换在服务端写入（P2），注册码流程不写。
+    # 不 import auth 的 model：外键按表名引用即可。
+    user_ref = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL", name="fk_devices_user_ref_users"), nullable=True
+    )
     platform = Column(Text, nullable=False, default="")
     ver = Column(Text, nullable=False, default="")
     last_seen_at = Column(Text, nullable=True)
@@ -65,6 +71,7 @@ class Device(Base):
         Index("idx_devices_organization_id", "organization_id"),
         Index("idx_devices_last_seen_at", "last_seen_at"),
         Index("idx_devices_user_id", "user_id"),
+        Index("idx_devices_user_ref", "user_ref"),
     )
 
 

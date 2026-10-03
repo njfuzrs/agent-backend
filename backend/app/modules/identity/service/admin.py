@@ -254,6 +254,7 @@ def _to_list_item(device: Device) -> DeviceListItem:
         org_id=device.organization.org_id if device.organization else "",
         team_id=device.team.team_id if device.team else "",
         user_id=device.user_id or "",
+        user_ref=device.user_ref,
         platform=device.platform or "",
         ver=device.ver or "",
         last_seen_at=device.last_seen_at,
