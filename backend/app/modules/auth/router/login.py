@@ -17,7 +17,7 @@
 失败一律 302 回 /login?error=<枚举>，不签发会话。错误枚举见 LOGIN_ERRORS。
 """
 
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
@@ -130,11 +130,22 @@ async def me(principal: SessionPrincipal = Depends(require_session)):
 
 @router.get("/feishu/start")
 async def feishu_start(
+    request: Request,
     redirect: str = Query("/", max_length=512),
     db: AsyncSession = Depends(get_db),
 ):
     if not settings.login.feishu_enabled:
         raise HTTPException(status_code=503, detail="feishu login is not configured")
+    # nonce cookie 按主机隔离。从 sid-code.cc 发起、回调落在 www.sid-code.cc 时，
+    # 回调带不上 nonce，必然 invalid_state（2026-10-04 线上实测）。
+    # 先把浏览器送到 PUBLIC_BASE_URL 的主机上再发起，cookie 与回调才在同一个主机。
+    canonical = urlsplit(settings.login.PUBLIC_BASE_URL)
+    if canonical.netloc and request.url.netloc != canonical.netloc:
+        target = (
+            f"{canonical.scheme}://{canonical.netloc}{canonical.path.rstrip('/')}"
+            f"/api/v1/auth/feishu/start?{urlencode({'redirect': redirect})}"
+        )
+        return RedirectResponse(target, status_code=302)
     state, nonce = await states.create_state(db, redirect)
     url = feishu.authorize_url(state, states.pkce_challenge(states.pkce_verifier(state)))
     resp = RedirectResponse(url, status_code=302)
