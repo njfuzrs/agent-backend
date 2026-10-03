@@ -43,7 +43,7 @@ api.interceptors.response.use(
   error => {
     const status = error.response?.status
     const url = String(error.config?.url || '')
-    const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/me')
+    const isAuthEndpoint = url.includes('/auth/')
     if (status === 401 && !isAuthEndpoint) {
       redirectToLogin()
     }
@@ -60,14 +60,47 @@ export async function logout(): Promise<void> {
   await api.post('/auth/logout')
 }
 
+export interface MeResponse {
+  username: string
+  kind: 'password' | 'user'
+  role: 'admin' | 'member'
+  name: string
+  is_admin: boolean
+}
+
+/** 当前登录身份。未登录返回 null。member 也会返回（is_admin=false），由外壳显示无权限页。 */
+export async function fetchMe(): Promise<MeResponse | null> {
+  try {
+    const { data } = await api.get<MeResponse>('/auth/me')
+    return data
+  } catch {
+    return null
+  }
+}
+
 /** 是否已登录 —— 问服务端，不再读 localStorage。 */
 export async function checkAuth(): Promise<boolean> {
+  return (await fetchMe()) !== null
+}
+
+export interface LoginOptions {
+  feishu_enabled: boolean
+  password_enabled: boolean
+}
+
+export async function fetchLoginOptions(): Promise<LoginOptions> {
   try {
-    await api.get('/auth/me')
-    return true
+    const { data } = await api.get<LoginOptions>('/auth/options')
+    return data
   } catch {
-    return false
+    // 拿不到就只给口令表单：后端没起来时点飞书按钮也只会 502
+    return { feishu_enabled: false, password_enabled: true }
   }
+}
+
+/** 飞书登录入口。整页跳转（不是 XHR）：要经过飞书授权页再回调。 */
+export function feishuLoginUrl(redirect: string): string {
+  return `${apiBasePath}/auth/feishu/start?redirect=${encodeURIComponent(redirect)}`
 }
 
 /** 轨迹列表 */

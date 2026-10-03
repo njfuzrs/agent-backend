@@ -23,6 +23,8 @@
     ⑩ POST /ctl/bridge/sessions 挂 require_device（② 也会扫到，这条把失败说成人话）；
        /bridge/sessions/** 挂 cookie（不在 /ctl/ 下，② 扫不到）；
        主应用不得挂 WebSocket 路由（挂上 + --workers 2 = 配对静默裂开）
+    ⑪ /auth/** 的免鉴权入口是白名单（AUTH_PUBLIC_ROUTES）；飞书回调不在 /ctl/ 下；
+       /users/** 挂 cookie 会话（admin）
 """
 
 import ast
@@ -43,6 +45,10 @@ DATA_PLANE_AUTH_SYMBOLS = {"verify_upload_token", "verify_basic_auth"}
 
 # 控制面模块（规划 §2.1）。M1-M5 逐个补齐，目录不存在时跳过。
 CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "event", "cost", "bridge"]
+
+# 不属于控制面、但同样不得复用数据面鉴权的模块。auth 是管理台登录本身：
+# 它要是 import 了 verify_basic_auth，「关掉口令」就关不干净。
+NO_DATA_PLANE_AUTH_MODULES = CONTROL_PLANE_MODULES + ["auth"]
 
 
 def _iter_py_files(root: Path):
@@ -84,7 +90,7 @@ def test_control_plane_never_imports_data_plane_auth():
     等于「谁拿到上传 token 谁能关掉全公司客户端的护栏」。
     """
     targets = [APP_DIR / "core" / "auth" / "control_plane.py"]
-    for mod in CONTROL_PLANE_MODULES:
+    for mod in NO_DATA_PLANE_AUTH_MODULES:
         targets.extend(_iter_py_files(APP_DIR / "modules" / mod))
 
     violations = []
@@ -954,6 +960,78 @@ def _mismatched_events(path, text: str, logger_name: str, expected_event: str) -
                 f"{logger_name} 配了 event={event!r}，只允许 {expected_event!r}"
             )
     return bad
+
+
+# ---------------------------------------------------------------------------
+# ⑪ 管理台登录：免鉴权入口白名单
+# ---------------------------------------------------------------------------
+# /api/v1/auth/** 下不挂任何会话依赖的端点。加一条就要写清「为什么还没登录也能调」。
+AUTH_PUBLIC_ROUTES = {
+    # 登录页决定显示哪些按钮。只返回两个布尔，不含配置值。
+    ("GET", "/api/v1/auth/options"),
+    # 口令应急登录。关闭开关后 404。成功写 break_glass 审计。
+    ("POST", "/api/v1/auth/login"),
+    # 登出：没有会话也能调（清 cookie 是幂等的）。
+    ("POST", "/api/v1/auth/logout"),
+    # 飞书 OAuth 起点：建 state + nonce cookie，302 到飞书。
+    ("GET", "/api/v1/auth/feishu/start"),
+    # 飞书回调：凭 state（一次性、10 分钟）+ nonce cookie + PKCE 授予会话。
+    ("GET", "/api/v1/auth/feishu/callback"),
+}
+
+
+def _route_deps(dependant):
+    return {getattr(d, "call", None) for d in _flatten_deps(getattr(dependant, "dependencies", []) or [])}
+
+
+def test_auth_public_routes_are_whitelisted():
+    """/auth/** 下没挂会话依赖的端点必须在 AUTH_PUBLIC_ROUTES 里；白名单里的端点必须存在。
+
+    假门禁对策：给 login.py 加一个不挂依赖的 GET /auth/debug 必须红。
+    """
+    from app.core.auth.session import require_session, require_web_session
+    from app.main import app
+
+    session_deps = {require_session, require_web_session}
+    actual = set()
+    offenders = []
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/auth/"):
+            continue
+        for m in methods:
+            if m == "HEAD":
+                continue
+            actual.add((m, path))
+            if _route_deps(dependant) & session_deps:
+                continue
+            if (m, path) not in AUTH_PUBLIC_ROUTES:
+                offenders.append(f"{m} {path}")
+    assert not offenders, "以下 /auth/ 端点免鉴权但不在 AUTH_PUBLIC_ROUTES 里:\n  " + "\n  ".join(offenders)
+    stale = sorted(AUTH_PUBLIC_ROUTES - actual)
+    assert not stale, f"AUTH_PUBLIC_ROUTES 里有已不存在的端点，请删除: {stale}"
+
+
+def test_feishu_callback_not_under_ctl():
+    """浏览器回调不放在 /ctl/ 下（方案 §6.5）：/ctl/ 是给客户端下发策略的控制面。"""
+    from app.main import app
+
+    for path, _methods, _dep in _iter_app_routes(app):
+        if "feishu" in path and "/auth/" in path:
+            assert "/ctl/" not in path, f"{path} 不该在 /ctl/ 下"
+
+
+def test_users_admin_requires_web_session():
+    """/users/** 必须挂 require_web_session（admin）。漏挂等于 member 能给自己改成 admin。"""
+    from app.core.auth.session import require_web_session
+    from app.main import app
+
+    seen = 0
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/users"):
+            continue
+        seen += 1
+        assert require_web_session in _route_deps(dependant), f"{sorted(methods)} {path} 没挂 require_web_session"
+    assert seen >= 4, "用户管理端点不见了"
 
 
 if __name__ == "__main__":

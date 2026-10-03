@@ -15,7 +15,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from app.core.auth.session import read_session
+from app.core.auth.session import bind_principal, read_session, reject_non_admin
 from app.core.config import settings
 from app.core.logging import bind_context, get_logger
 
@@ -42,11 +42,13 @@ async def verify_basic_auth(
     必须是异步的。同步依赖被 FastAPI 丢进线程池，contextvar 不跨线程，
     这里写的 actor 与 auth 在访问日志里会读不到（方案 §3.4）。
     """
-    session_user = read_session(request)
-    if session_user:
+    principal = await read_session(request)
+    if principal is not None:
         # 只记种类，不记 cookie 值。访问日志在请求结束时读这个上下文（方案 §3.4）。
-        bind_context(auth="session", actor=session_user)
-        return session_user
+        bind_principal(principal)
+        # 飞书登录的 member 看不到轨迹：管理台的数据一律只给 admin（方案 §5.7）。
+        reject_non_admin(principal)
+        return principal.actor
 
     if credentials is not None:
         ok_user = secrets.compare_digest(credentials.username, settings.AUTH_USERNAME)
