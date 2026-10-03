@@ -196,7 +196,7 @@ def test_state_replay_is_rejected(client):
     first = _callback(client, code=f"{ADMIN_UNION}@{TENANT}", state=state)
     assert first.headers["location"].endswith("/devices")
     client.cookies.clear()
-    client.cookies.set("traj_login_nonce", nonce)
+    client.cookies.set("traj_login_nonce", nonce, domain="example.test")
     assert _error_of(_callback(client, code=f"{ADMIN_UNION}@{TENANT}", state=state)) == "invalid_state"
 
 
@@ -211,9 +211,12 @@ def test_expired_state_is_rejected(client):
 def test_state_from_another_browser_is_rejected(client):
     """登录 CSRF：攻击者拿自己的 state + code 让管理员的浏览器回调。管理员浏览器没有匹配的 nonce。"""
     state = _start(client)
-    client.cookies.set("traj_login_nonce", "attacker-browser-nonce")
+    # 先清空：start 下发的正确 nonce 还在 jar 里（domain=example.test），直接 set 会多出一个
+    # 同名 cookie，发哪个取决于 cookiejar 实现（3.10 与 3.13 不同），测试就成了碰运气。
+    client.cookies.clear()
+    client.cookies.set("traj_login_nonce", "attacker-browser-nonce", domain="example.test")
     assert _error_of(_callback(client, code=f"{MEMBER_UNION}@{TENANT}", state=state)) == "invalid_state"
-    client.cookies.delete("traj_login_nonce")
+    client.cookies.clear()
     assert _error_of(_callback(client, code=f"{MEMBER_UNION}@{TENANT}", state=state)) == "invalid_state"
     assert client.get("/api/v1/auth/me").status_code == 401
     assert client.calls["exchange"] == []
