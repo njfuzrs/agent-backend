@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, useNavigate, useLocation, Outlet } from 'react-router-dom'
-import { Layout, Menu, Typography, Button, Space, Spin } from 'antd'
+import { Layout, Menu, Typography, Button, Space, Spin, Result } from 'antd'
 import {
   ApiOutlined,
   DashboardOutlined,
@@ -10,6 +10,7 @@ import {
   SafetyCertificateOutlined,
   AuditOutlined,
   SettingOutlined,
+  TeamOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
@@ -23,8 +24,9 @@ import PolicyList from './modules/policy/pages/PolicyList'
 import AuditOverview from './modules/event/pages/AuditOverview'
 import CostOverview from './modules/cost/pages/CostOverview'
 import BridgeSessions from './modules/bridge/pages/BridgeSessions'
+import UserList from './modules/auth/pages/UserList'
 import LoginPage from './pages/Login'
-import { checkAuth, logout } from './modules/trajectory/services/api'
+import { fetchMe, logout, type MeResponse } from './modules/trajectory/services/api'
 
 const { Header, Content } = Layout
 
@@ -32,14 +34,14 @@ function ProtectedLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [ready, setReady] = useState(false)
-  const [authed, setAuthed] = useState(false)
+  const [me, setMe] = useState<MeResponse | null>(null)
   const queryClient = useQueryClient()
 
   useEffect(() => {
     let cancelled = false
-    checkAuth().then(ok => {
+    fetchMe().then(result => {
       if (cancelled) return
-      setAuthed(ok)
+      setMe(result)
       setReady(true)
     })
     return () => {
@@ -50,7 +52,7 @@ function ProtectedLayout() {
   if (!ready) {
     return <Spin size="large" style={{ display: 'block', margin: '120px auto' }} />
   }
-  if (!authed) {
+  if (!me) {
     return <Navigate to="/login" replace state={{ from: location }} />
   }
 
@@ -68,6 +70,8 @@ function ProtectedLayout() {
               ? '/cost'
               : location.pathname.startsWith('/bridge')
                 ? '/bridge'
+                : location.pathname.startsWith('/users')
+                ? '/users'
                 : location.pathname.startsWith('/settings')
                 ? '/settings'
                 : '/'
@@ -79,6 +83,19 @@ function ProtectedLayout() {
       queryClient.clear()
       navigate('/login', { replace: true })
     }
+  }
+
+  // 飞书登录的 member：有身份但不是管理员。后端所有管理接口都会 403，这里直接说清楚。
+  if (!me.is_admin) {
+    return (
+      <Result
+        status="403"
+        title="没有管理台权限"
+        subTitle={`已登录为 ${me.name || me.username}。管理台只对管理员开放，需要权限请联系现有管理员。`}
+        extra={<Button onClick={handleLogout}>退出登录</Button>}
+        style={{ minHeight: '100vh', background: '#141414', paddingTop: 120 }}
+      />
+    )
   }
 
   return (
@@ -101,11 +118,15 @@ function ProtectedLayout() {
             { key: '/audit', icon: <AuditOutlined />, label: '审计' },
             { key: '/cost', icon: <DollarOutlined />, label: '成本' },
             { key: '/bridge', icon: <ApiOutlined />, label: '遥控' },
+            { key: '/users', icon: <TeamOutlined />, label: '用户' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
         />
         <Space>
+          <Typography.Text style={{ color: 'rgba(255,255,255,0.65)', whiteSpace: 'nowrap' }}>
+            {me.kind === 'password' ? '口令登录（应急）' : me.name || me.username}
+          </Typography.Text>
           <Button type="text" icon={<LogoutOutlined />} onClick={handleLogout} style={{ color: '#fff' }}>
             登出
           </Button>
@@ -132,6 +153,7 @@ function App() {
         <Route path="/audit" element={<AuditOverview />} />
         <Route path="/cost" element={<CostOverview />} />
         <Route path="/bridge" element={<BridgeSessions />} />
+        <Route path="/users" element={<UserList />} />
         <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         <Route path="/compare" element={<Navigate to="/" replace />} />
         <Route path="/compare/:groupId" element={<Navigate to="/" replace />} />

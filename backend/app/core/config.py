@@ -74,6 +74,52 @@ class ControlPlaneSettings(BaseSettings):
     BRIDGE_WS_PUBLIC_URL: str = ""
 
 
+class LoginSettings(BaseSettings):
+    """管理台登录：飞书身份（P1）+ 共享口令应急入口。
+
+    飞书四项（APP_ID / APP_SECRET / PUBLIC_BASE_URL）任一为空，飞书登录就不可用，
+    `/auth/feishu/start` 返回 503；口令登录不受影响。这样没配飞书的本地环境照常能跑。
+    """
+
+    model_config = _ENV
+
+    # 对外地址，拼飞书 redirect_uri 用。nginx 把 /traj/api/ 反代到 /api/，后端自己算不出来。
+    # 生产：https://www.sid-code.cc/traj ；本地：http://localhost:5173（走 vite 代理）
+    PUBLIC_BASE_URL: str = ""
+    # 管理台前端的对外地址，登录完成后跳回这里。留空则等于 PUBLIC_BASE_URL
+    # （生产前端就挂在 /traj/ 下）。本地 vite 的前端在 /traj/、API 在 /api/，两者不同，要单独配。
+    ADMIN_UI_BASE_URL: str = ""
+
+    FEISHU_APP_ID: str = ""
+    # ⚠️ 只写进服务器 .env，不进仓库、不进对话、不进日志。
+    FEISHU_APP_SECRET: str = ""
+    # 纵深防御：只认这个租户的账号。留空时不校验（首次登录前拿不到它），
+    # 登录后从 users 表的 tenant_key 列取值填回来。
+    FEISHU_TENANT_KEY: str = ""
+    # 授权页请求的 scope，空格分隔。登录本身不需要 scope；P4 读文档时再加。
+    FEISHU_LOGIN_SCOPE: str = ""
+
+    # 引导管理员：逗号分隔的 union_id。列在这里的人每次登录都会被确保为 admin。
+    ADMIN_BOOTSTRAP_UNION_IDS: str = ""
+
+    # 共享口令登录页（POST /auth/login）是否开放。默认开：飞书登录在真实环境走通之前
+    # 关掉它会把自己锁在管理台外面。确认飞书扫码能进之后，生产改成 false。
+    # 只管浏览器登录页；脚本 / curl 用的 HTTP Basic 不受影响。
+    AUTH_PASSWORD_LOGIN_ENABLED: bool = True
+
+    @property
+    def feishu_enabled(self) -> bool:
+        return bool(self.FEISHU_APP_ID and self.FEISHU_APP_SECRET and self.PUBLIC_BASE_URL)
+
+    @property
+    def bootstrap_union_ids(self) -> set[str]:
+        return {x.strip() for x in self.ADMIN_BOOTSTRAP_UNION_IDS.split(",") if x.strip()}
+
+    @property
+    def ui_base_url(self) -> str:
+        return (self.ADMIN_UI_BASE_URL or self.PUBLIC_BASE_URL).rstrip("/")
+
+
 class StorageSettings(BaseSettings):
     """存储：本地文件系统 或 阿里云 OSS，由 STORAGE_BACKEND 切换。"""
 
@@ -115,6 +161,7 @@ class Settings(BaseSettings):
         self._data_plane = DataPlaneSettings()
         self._control_plane = ControlPlaneSettings()
         self._storage = StorageSettings()
+        self._login = LoginSettings()
 
     # ---- 分段访问（新代码用这个）----
     @property
@@ -129,9 +176,13 @@ class Settings(BaseSettings):
     def storage(self) -> StorageSettings:
         return self._storage
 
+    @property
+    def login(self) -> LoginSettings:
+        return self._login
+
     # ---- 扁平访问（存量代码用这个，行为与分段前逐字一致）----
     def __getattr__(self, name: str):
-        for seg in ("_data_plane", "_control_plane", "_storage"):
+        for seg in ("_data_plane", "_control_plane", "_storage", "_login"):
             seg_obj = self.__dict__.get(seg)
             if seg_obj is not None and name in type(seg_obj).model_fields:
                 return getattr(seg_obj, name)

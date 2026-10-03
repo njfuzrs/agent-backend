@@ -24,7 +24,8 @@ configure_logging()
 logger = get_logger("agent")
 
 from app.core.middleware import RequestContextMiddleware
-from app.core.router import auth
+from app.modules.auth.router import admin as users_admin
+from app.modules.auth.router import login as auth_login
 from app.modules.bridge.router import admin as bridge_admin
 from app.modules.bridge.router import serve as bridge_serve
 from app.modules.cost.router import admin as cost_admin
@@ -104,8 +105,9 @@ app.add_middleware(RequestContextMiddleware)
 # 兜底在中间件之内：处理器运行时 request_id 已经在上下文里，响应才能把它带回去。
 install_exception_handlers(app)
 
-# ---- 平台内核：管理台会话（凭据不进 localStorage，见 §PR-0.5）----
-app.include_router(auth.router, prefix="/api/v1")
+# ---- 管理台登录：飞书 OAuth + 口令应急入口（凭据不进 localStorage，见 §PR-0.5）----
+# 全部是免鉴权入口，由 test_boundaries 的 AUTH_PUBLIC_ROUTES 逐条登记。
+app.include_router(auth_login.router, prefix="/api/v1")
 # 就绪检查。不进冻结区、不挂鉴权、不探 OSS（方案 §3.8）。
 app.include_router(ready_router, prefix="/api/v1")
 
@@ -145,6 +147,7 @@ app.include_router(event_admin.router, prefix="/api/v1")
 app.include_router(cost_admin.ledger_router, prefix="/api/v1")
 app.include_router(cost_admin.budget_router, prefix="/api/v1")
 app.include_router(bridge_admin.router, prefix="/api/v1")
+app.include_router(users_admin.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

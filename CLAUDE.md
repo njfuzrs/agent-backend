@@ -8,7 +8,7 @@
 
 本仓是 **Agent Backend**（企业级 Agent 后端）：sid-code 与 claude-trace 共同面对的服务端，控制面（policy / flag / 身份）与数据面（轨迹 / 事件）同仓部署、鉴权隔离。
 
-轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`）。
+轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`），auth（管理台飞书登录与人员身份）是第七个（`modules/auth/`）。
 
 GitHub 目标仓名 `njfuzrs/agent-backend`。生产路径 `/opt/trajectory-platform`、nginx 前缀 `/traj/`、unit 文件名 `trajectory-platform.service` **故意不改**（采集 URL 已对外冻结）。
 
@@ -42,13 +42,12 @@ agent-backend/
 │   ├── app/
 │   │   ├── main.py         # 只做装配：CORS + 路由注册 + 启动时 schema 版本检查
 │   │   ├── core/           # 平台内核
-│   │   │   ├── config.py       # 分段配置（DataPlane/ControlPlane/Storage）
+│   │   │   ├── config.py       # 分段配置（DataPlane/ControlPlane/Storage/Login）
 │   │   │   ├── db.py           # 引擎 + session（不再建表，schema 归 Alembic）
 │   │   │   ├── auth/
 │   │   │   │   ├── data_plane.py     # Basic Auth + Upload Token（含冻结区鉴权）
 │   │   │   │   ├── control_plane.py  # require_device：Bearer 设备凭据
-│   │   │   │   └── session.py        # 管理台 HttpOnly cookie 会话
-│   │   │   └── router/auth.py   # /auth/login、/logout、/me
+│   │   │   │   └── session.py        # 管理台 HttpOnly cookie 会话（口令 / 飞书两种主体，按 user 查状态与角色）
 │   │   └── modules/        # 业务模块 = 一组内聚的表 + 一个路由前缀 + 一条鉴权链
 │   │       ├── trajectory/     # 模块一：轨迹存储与分析（已交付）
 │   │       │   ├── model.py    # ORM 模型（trajectories / tool_steps）
@@ -75,11 +74,16 @@ agent-backend/
 │   │       │   ├── schemas.py
 │   │       │   ├── router/     # ingest（POST /events）/ admin
 │   │       │   └── service/    # ingest / queries / guard
-│   │       └── cost/           # 模块六：用量账本与预算（M5）
-│   │           ├── model.py    # usage_ledger / budgets / budget_audit
+│   │       ├── cost/           # 模块六：用量账本与预算（M5）
+│   │       │   ├── model.py    # usage_ledger / budgets / budget_audit
+│   │       │   ├── schemas.py
+│   │       │   ├── router/     # ingest（POST /usage/ledger）/ serve（GET /ctl/budget）/ admin
+│   │       │   └── service/    # ingest（upsert）/ budgets（求值+CRUD）/ queries / guard
+│   │       └── auth/           # 模块七：管理台飞书登录与人员身份（P1）
+│   │           ├── model.py    # users / auth_states / auth_audit
 │   │           ├── schemas.py
-│   │           ├── router/     # ingest（POST /usage/ledger）/ serve（GET /ctl/budget）/ admin
-│   │           └── service/    # ingest（upsert）/ budgets（求值+CRUD）/ queries / guard
+│   │           ├── router/     # login（/auth/**：options / login / logout / me / feishu start+callback）/ admin（/users/**）
+│   │           └── service/    # feishu（OAuth HTTP）/ states（state+nonce+PKCE）/ users（upsert / 角色 / 吊销 / 审计）
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   ├── src/
@@ -93,6 +97,7 @@ agent-backend/
 │   │   ├── modules/flag/         # Feature Flag 列表
 │   │   ├── modules/policy/       # 策略列表（device/team/org）
 │   │   ├── modules/event/        # 审计视图（/audit，与轨迹 join）
+│   │   ├── modules/auth/         # 用户列表（角色 / 吊销）+ 登录审计（/users）
 │   │   └── utils/          # 跨模块工具（format / chart / trajectoryDetail）
 │   └── vite.config.ts      # base: '/traj/'（冻结区，不要改）
 ├── data/                   # 数据目录（.gitignore）
@@ -127,6 +132,7 @@ agent-backend/
 - **schema 演进只有一条路**：`alembic upgrade head`。原 `init_db()` 的 `create_all` + `_migrate_sqlite_columns()` 已删除 —— 前者不改已有表的列，后者被 `is_sqlite` 挡住（生产是 PG，等于生产无加列路径）。运行时代码不得建表，由边界测试拦截
 - **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`（签发入口 `/ctl/enroll` 除外走一次性注册码；`GET /ctl/flags` 是客户端裸 fetch 的有意豁免）。`GET /ctl/policy` **必须**挂 `require_device`，不要加进豁免名单。`POST /api/v1/events` 与 `POST /api/v1/usage/ledger` 数据面方向、控制面鉴权，**不在 `/ctl/` 下**，现有门禁 ② 扫不到，由 `test_events_ingest_requires_device` / `test_usage_ledger_ingest_requires_device` 专门盯。`GET /ctl/budget` 虽在 `/ctl/` 下，仍另有 `test_budget_serve_requires_device` 盯豁免名单。由边界测试反射检查
 - **管理台凭据不落 localStorage**：独立登录页走 `/api/v1/auth/login` 下发 HttpOnly + SameSite cookie（无状态 HMAC 签名，跨 worker 有效）。未登录或 401 跳 `/login`。Basic Auth 保留给脚本与 curl
+- **管理台登录 = 飞书优先 + 口令应急**（`modules/auth/`）：`/auth/feishu/start` → 飞书 → `/auth/feishu/callback`，state 只存 hash、一次性、10 分钟，并与 HttpOnly nonce cookie 绑定（防登录 CSRF），PKCE S256。角色只有 admin / member：新用户是 member，所有管理接口 403；admin 由 `ADMIN_BOOTSTRAP_UNION_IDS` 引导、之后在「用户」页授予。飞书会话每次请求按主键查 `users.status/role`，吊销下一次请求即 401。口令登录由 `AUTH_PASSWORD_LOGIN_ENABLED`（默认 true）控制，关掉后 `/auth/login` 404、已有口令会话失效，每次口令登录写 `break_glass` 审计。P1 **不存**飞书 token（P4 才加密落库）。`/auth/**` 的免鉴权入口由 `test_boundaries.py` 的 `AUTH_PUBLIC_ROUTES` 白名单锁定
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400
 - **文件格式兼容**：读取时自动尝试 `.gz` 和非 `.gz` 格式，兼容迁移前的旧数据
