@@ -35,6 +35,8 @@ class UsageLedgerItem(BaseModel):
     device_id: str
     org_id: str
     team_id: str = ""
+    # 最近一次上报时设备绑定的人（users.id）。服务端从凭据写入；NULL = 未登录设备
+    user_ref: Optional[int] = None
     session_id: str
     ts: int
     received_at: str
@@ -84,6 +86,31 @@ class UsageByScopeResponse(BaseModel):
     period: str
     period_key: str
     items: list[UsageByScopeItem]
+
+
+class UsageByUserItem(BaseModel):
+    """按人一行。回答「A 今天几个会话、花了多少」（方案 §5.6 / P3）。
+
+    user_ref 为 NULL 的一行是「未登录设备」合计，不能丢：丢了总数就对不上 by-scope。
+    同 by-scope，不返回单价字段。
+    """
+
+    user_ref: Optional[int] = None
+    name: str = ""  # users.name 的展示副本；用户行删了就是空串
+    union_id: str = ""
+    devices: int = 0
+    sessions: int = 0
+    cost_usd: float = 0
+    side_cost_usd: Optional[float] = None
+    prompt_total: int = 0
+    output: int = 0
+    last_received_at: Optional[str] = None
+
+
+class UsageByUserResponse(BaseModel):
+    period: str
+    period_key: str
+    items: list[UsageByUserItem]
 
 
 class BudgetCreate(BaseModel):

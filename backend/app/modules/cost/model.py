@@ -34,7 +34,7 @@ from app.core.db import Base
 class UsageLedger(Base):
     """一条会话用量。按 (device_id, session_id) upsert，latest-wins 整行覆盖。
 
-    `device_id` / `org_id` / `team_id` 一律来自 `DeviceContext`，**不从 body 取** ——
+    `device_id` / `org_id` / `team_id` / `user_ref` 一律来自 `DeviceContext`，**不从 body 取** ——
     body 里的同名字段是攻击面（契约 §1）。
     """
 
@@ -44,6 +44,8 @@ class UsageLedger(Base):
     device_id = Column(Text, nullable=False)  # 从凭据
     org_id = Column(Text, nullable=False)  # 从凭据。文本副本
     team_id = Column(Text, nullable=False, default="")  # 从凭据。可空语义用空串
+    # 最近一次上报时设备绑定的人（users.id），从凭据。NULL = 未登录设备。不建 FK
+    user_ref = Column(Integer, nullable=True)
     session_id = Column(Text, nullable=False)  # upsert 键的另一半
     ts = Column(Integer, nullable=False)  # 客户端秒 epoch，原样存
     received_at = Column(Text, nullable=False)  # 服务端 ISO。每次 upsert 刷新
@@ -68,6 +70,7 @@ class UsageLedger(Base):
     __table_args__ = (
         Index("uq_usage_ledger_device_session", "device_id", "session_id", unique=True),
         Index("idx_usage_ledger_org_id", "org_id"),
+        Index("idx_usage_ledger_user_ref", "user_ref"),
         Index("idx_usage_ledger_session_id", "session_id"),
         Index("idx_usage_ledger_received_at", "received_at"),
         Index("idx_usage_ledger_org_received", "org_id", "received_at"),

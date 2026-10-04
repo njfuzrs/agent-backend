@@ -28,6 +28,7 @@ from app.modules.cost.schemas import (
     BudgetListResponse,
     BudgetUpdate,
     UsageByScopeResponse,
+    UsageByUserResponse,
     UsageLedgerListResponse,
 )
 from app.modules.cost.service import budgets as budget_service
@@ -51,12 +52,13 @@ async def list_ledger(
     org_id: Optional[str] = None,
     device_id: Optional[str] = None,
     since: Optional[str] = None,
+    user_ref: Optional[int] = None,
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    """下钻列表。按 received_at 倒序。"""
+    """下钻列表。按 received_at 倒序。user_ref 按人筛（P3）。"""
     return await query_service.list_ledger(
-        db, org_id=org_id, device_id=device_id, since=since, limit=limit
+        db, org_id=org_id, device_id=device_id, since=since, user_ref=user_ref, limit=limit
     )
 
 
@@ -69,6 +71,17 @@ async def by_scope(
 ):
     """按 device 一行。回答「谁在烧钱」。不得返回单价字段。"""
     return await query_service.by_scope(db, period=period, period_key=period_key, org_id=org_id)
+
+
+@ledger_router.get("/stats/by-user", response_model=UsageByUserResponse)
+async def by_user(
+    period: str = Query("daily"),
+    period_key: Optional[str] = None,
+    org_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """按人一行。回答「A 今天几个会话、花了多少」。默认 daily。不得返回单价字段。"""
+    return await query_service.by_user(db, period=period, period_key=period_key, org_id=org_id)
 
 
 @budget_router.get("", response_model=BudgetListResponse)

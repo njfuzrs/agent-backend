@@ -14,7 +14,7 @@
     鉴权 fail-closed —— 无头 / 坏头 / 吊销 / 过期 → 401。禁止 X-Upload-Token 当鉴权。
     写入 fail-open —— 一行 upsert 失败 5xx，让客户端重试。
 
-`org_id` / `team_id` / `device_id` 一律从 `DeviceContext` 取，忽略 body 里的任何
+`org_id` / `team_id` / `device_id` / `user_ref` 一律从 `DeviceContext` 取，忽略 body 里的任何
 同名字段。body 解析不用 Pydantic 模型：缺 `sessionId` 要 400 不是 422。
 """
 
@@ -76,4 +76,5 @@ async def post_usage_ledger(
         device_id=ctx.device_id,
         org_id=ctx.org_id,
         team_id=ctx.team_id or "",
+        user_ref=ctx.user_ref,
     )

@@ -33,7 +33,7 @@ from app.core.db import Base
 class Event(Base):
     """一条 analytics 事件。只追加，不更新，不删除。
 
-    `device_id` / `org_id` / `team_id` 一律来自 `DeviceContext`，**不从 body 取** ——
+    `device_id` / `org_id` / `team_id` / `user_ref` 一律来自 `DeviceContext`，**不从 body 取** ——
     body 里的同名字段是攻击面（契约 §1）。
     """
 
@@ -47,6 +47,8 @@ class Event(Base):
     device_id = Column(Text, nullable=False)  # 从凭据
     org_id = Column(Text, nullable=False)  # 从凭据。文本副本，筛选/隔离用
     team_id = Column(Text, nullable=False, default="")  # 从凭据。可空语义用空串
+    # 上报时设备绑定的人（users.id），从凭据。NULL = 未登录设备。不建 FK，理由同 devices
+    user_ref = Column(Integer, nullable=True)
     # join key。**可空** —— metadata 缺 `_ctx_session_id` 时仍入库：
     # 事件有 device 归属就有审计价值，只是 join 不上。缺失率在管理台可见。
     session_id = Column(Text, nullable=True)
@@ -61,6 +63,7 @@ class Event(Base):
         Index("idx_events_session_id", "session_id"),
         Index("idx_events_device_id", "device_id"),
         Index("idx_events_org_id", "org_id"),
+        Index("idx_events_user_ref", "user_ref"),
         Index("idx_events_name_received", "event_name", "received_at"),
     )
 

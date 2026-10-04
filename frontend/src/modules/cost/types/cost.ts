@@ -33,12 +33,36 @@ export type UsageByScopeResponse = {
   items: UsageByScopeItem[]
 }
 
+/** by-user 的一行：一个人在某周期里的用量（P3）。
+ *  user_ref 为 null 的那一行是「未登录设备」合计：注册码设备没有人，留着才和 by-scope 总数对得上。 */
+export type UsageByUserItem = {
+  user_ref: number | null
+  /** users.name 的展示副本；用户行删了就是空串 */
+  name: string
+  union_id: string
+  devices: number
+  sessions: number
+  cost_usd: number
+  side_cost_usd: number | null
+  prompt_total: number
+  output: number
+  last_received_at: string | null
+}
+
+export type UsageByUserResponse = {
+  period: string
+  period_key: string
+  items: UsageByUserItem[]
+}
+
 /** 下钻：一条账本 = 一个 (device, session)。上报是 upsert，同会话多次覆盖不累加。 */
 export type UsageLedgerItem = {
   id: number
   device_id: string
   org_id: string
   team_id: string
+  /** 最近一次上报时设备绑定的人。服务端从设备凭据写入，可信；null = 未登录设备 */
+  user_ref: number | null
   session_id: string
   /** 客户端**秒** epoch。展示要 ×1000。 */
   ts: number

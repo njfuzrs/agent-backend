@@ -714,14 +714,19 @@ def test_usage_ledger_has_no_delete_endpoint():
 
 
 def test_usage_stats_response_has_no_unit_price():
-    """by-scope 响应 schema / 示例不得出现 unit_price、cost_per_token、
+    """by-scope / by-user 响应 schema / 示例不得出现 unit_price、cost_per_token、
     costUSD/promptTotal 这类字段。规划口径陷阱的机械化。
     假门禁对策：schema 临时加 unit_price: float 必须红。
     """
-    from app.modules.cost.schemas import UsageByScopeItem, UsageByScopeResponse
+    from app.modules.cost.schemas import (
+        UsageByScopeItem,
+        UsageByScopeResponse,
+        UsageByUserItem,
+        UsageByUserResponse,
+    )
     from app.modules.cost.service.guard import BANNED_UNIT_PRICE_FIELDS
 
-    for model in (UsageByScopeItem, UsageByScopeResponse):
+    for model in (UsageByScopeItem, UsageByScopeResponse, UsageByUserItem, UsageByUserResponse):
         fields = set(model.model_fields)
         leaked = fields & BANNED_UNIT_PRICE_FIELDS
         assert not leaked, (

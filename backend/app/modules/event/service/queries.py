@@ -73,6 +73,7 @@ def _to_item(row: Event) -> EventItem:
         device_id=row.device_id,
         org_id=row.org_id,
         team_id=row.team_id or "",
+        user_ref=row.user_ref,
         session_id=row.session_id,
         client_ts=row.client_ts,
         received_at=row.received_at,
@@ -88,6 +89,7 @@ def _apply_event_filters(
     event_name: Optional[str],
     org_id: Optional[str],
     since: Optional[str],
+    user_ref: Optional[int] = None,
 ):
     """列表和下钻共用同一套筛选。daily 分桶必须走同一组 where，否则柱状图和表格对不上。"""
     if session_id:
@@ -100,6 +102,8 @@ def _apply_event_filters(
         stmt = stmt.where(Event.org_id == org_id)
     if since:
         stmt = stmt.where(Event.received_at >= since)
+    if user_ref is not None:
+        stmt = stmt.where(Event.user_ref == user_ref)
     return stmt
 
 
@@ -111,6 +115,7 @@ async def list_events(
     event_name: Optional[str] = None,
     org_id: Optional[str] = None,
     since: Optional[str] = None,
+    user_ref: Optional[int] = None,
     limit: int = 100,
 ) -> EventListResponse:
     """下钻列表。只做契约 §8 那几个维度，metadata 内部字段筛选是 BI，不做。
@@ -125,6 +130,7 @@ async def list_events(
         event_name=event_name,
         org_id=org_id,
         since=since,
+        user_ref=user_ref,
     )
     stmt = _apply_event_filters(select(Event), **filters)
     count_stmt = _apply_event_filters(select(func.count()).select_from(Event), **filters)

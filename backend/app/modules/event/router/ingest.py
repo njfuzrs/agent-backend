@@ -14,7 +14,7 @@
     写入 fail-open —— 单条坏事件只计 rejected，不退整批。
     白名单 fail-closed —— 未知事件名不入库。
 
-`org_id` / `team_id` / `device_id` 一律从 `DeviceContext` 取，忽略 body 里的任何
+`org_id` / `team_id` / `device_id` / `user_ref` 一律从 `DeviceContext` 取，忽略 body 里的任何
 同名字段。body 解析不用 Pydantic 模型：缺 `events` 键要 400 不是 422（契约 §1），
 一条坏事件也绝不能变成整批 422。
 """
@@ -88,4 +88,5 @@ async def post_events(
         device_id=ctx.device_id,
         org_id=ctx.org_id,
         team_id=ctx.team_id or "",
+        user_ref=ctx.user_ref,
     )
