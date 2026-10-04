@@ -41,6 +41,8 @@ from app.modules.flag.router import flags as flag_serve
 from app.modules.identity.router import admin as identity_admin
 from app.modules.identity.router import enroll as identity_enroll
 from app.modules.identity.router import whoami as identity_whoami
+from app.modules.marketplace.router import admin as marketplace_admin
+from app.modules.marketplace.router import serve as marketplace_serve
 from app.modules.policy.router import admin as policy_admin
 from app.modules.policy.router import serve as policy_serve
 from app.modules.trajectory.router import (
@@ -145,6 +147,9 @@ app.include_router(bridge_serve.router, prefix="/api/v1")
 # 委托授权（P4）：远程 MCP，设备凭据 → 服务端取本人飞书 token → 以用户身份读文档。
 # token 不出服务端。必须挂 require_device，不进豁免名单（test_feishu_mcp_requires_device）。
 app.include_router(feishu_mcp.router, prefix="/api/v1")
+# 插件市场（P5）：设备只读的目录与制品下载。必须挂 require_device，不进豁免名单
+# （test_marketplace_serve_requires_device）。index 是 sha256 的来源，必须走可信通道。
+app.include_router(marketplace_serve.router, prefix="/api/v1")
 
 # ---- 管理台：身份 / flag / policy / event / cost（cookie 会话，给人看，不给客户端下发策略）----
 app.include_router(identity_admin.router, prefix="/api/v1")
@@ -156,6 +161,7 @@ app.include_router(cost_admin.budget_router, prefix="/api/v1")
 app.include_router(bridge_admin.router, prefix="/api/v1")
 app.include_router(users_admin.router, prefix="/api/v1")
 app.include_router(feishu_admin.router, prefix="/api/v1")
+app.include_router(marketplace_admin.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

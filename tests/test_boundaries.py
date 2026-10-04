@@ -27,6 +27,8 @@
        /users/** 挂 cookie 会话（admin）
     ⑫ 委托授权（P4）：/ctl/feishu/mcp 挂 require_device 且不在豁免名单；/feishu/** 挂 cookie；
        auth / feishu 模块的日志调用不得引用 token 变量；feishu 模块不得出现 tenant_access_token
+    ⑬ 插件市场（P5）：/ctl/marketplace/** 挂 require_device、只读、不在豁免名单；
+       /marketplace/** 挂 cookie；包校验只在内存里读，不得调用 tar 解包落盘
 """
 
 import ast
@@ -46,7 +48,7 @@ APP_DIR = BACKEND_DIR / "app"
 DATA_PLANE_AUTH_SYMBOLS = {"verify_upload_token", "verify_basic_auth"}
 
 # 控制面模块（规划 §2.1）。M1-M5 逐个补齐，目录不存在时跳过。
-CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "event", "cost", "bridge", "feishu"]
+CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "event", "cost", "bridge", "feishu", "marketplace"]
 
 # 不属于控制面、但同样不得复用数据面鉴权的模块。auth 是管理台登录本身：
 # 它要是 import 了 verify_basic_auth，「关掉口令」就关不干净。
@@ -1173,6 +1175,77 @@ def test_feishu_never_uses_tenant_token():
                 if "tenant_access_token" in name or "tenant_token" in name:
                     violations.append(f"{path.relative_to(BACKEND_DIR)}:{node.lineno} 引用了 {name}")
     assert not violations, "委托授权不得降级到应用身份:\n  " + "\n  ".join(violations)
+
+
+# ---------------------------------------------------------------------------
+# ⑬ 插件市场（P5）
+# ---------------------------------------------------------------------------
+def test_marketplace_serve_requires_device_and_is_read_only():
+    """/ctl/marketplace/**（index 与制品）必须挂 require_device、只有 GET，且不得进豁免名单。
+
+    index 是客户端 sha256 校验的来源：无认证的 index = 中间人能同时换包和换哈希。
+    门禁 ② 也会扫到，这条把失败说成人话，并锁死「不许为了方便豁免」。
+    """
+    from app.core.auth.control_plane import require_device
+    from app.main import app
+
+    seen = set()
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/ctl/marketplace"):
+            continue
+        seen.add(path)
+        assert require_device in _route_deps(dependant), f"{sorted(methods)} {path} 没挂 require_device"
+        writes = {m for m in methods if m in {"POST", "PUT", "PATCH", "DELETE"}}
+        assert not writes, f"{path} 不得有写方法 {sorted(writes)}。上架走 /api/v1/marketplace/**（cookie）"
+    assert {"/api/v1/ctl/marketplace/index", "/api/v1/ctl/marketplace/artifacts/{name}/{version}"} <= seen
+    assert not any("/ctl/marketplace" in p for _m, p in CTL_AUTH_EXEMPTIONS)
+
+
+def test_marketplace_admin_requires_web_session():
+    """/marketplace/**（上架 / 发布 / 下架 / 审计 / 下载记录）必须挂 require_web_session，且不在 /ctl/ 下。"""
+    from app.core.auth.session import require_web_session
+    from app.main import app
+
+    seen = 0
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/marketplace"):
+            continue
+        seen += 1
+        assert require_web_session in _route_deps(dependant), f"{sorted(methods)} {path} 没挂 require_web_session"
+    assert seen >= 8, "市场管理端点不见了"
+
+
+TAR_EXTRACT_CALLS = {"extractall", "extract", "makefile", "makedir", "makelink"}
+
+
+def _tar_extract_calls(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return [
+        f"{path.name}:{node.lineno} {node.func.attr}()"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in TAR_EXTRACT_CALLS
+    ]
+
+
+def test_marketplace_never_extracts_to_disk():
+    """服务端只在内存里读包（tarfile.extractfile 返回文件对象），不得解包落盘。
+
+    落盘解包是 zip slip 真正发生的地方。服务端不需要解包，那就让它根本没有这条路。
+    """
+    violations = []
+    for path in _iter_py_files(APP_DIR / "modules" / "marketplace"):
+        violations.extend(_tar_extract_calls(path))
+    assert not violations, "marketplace 模块出现了解包落盘调用:\n  " + "\n  ".join(violations)
+
+
+def test_tar_extract_scan_catches_violation(tmp_path):
+    """门禁自证：extractall / extract 必须被报出来，extractfile 不报。"""
+    bad = tmp_path / "bad.py"
+    bad.write_text("tar.extractall('/tmp/x')\ntar.extract(m, path)\n", encoding="utf-8")
+    assert len(_tar_extract_calls(bad)) == 2
+    good = tmp_path / "good.py"
+    good.write_text("tar.extractfile(member).read()\n", encoding="utf-8")
+    assert _tar_extract_calls(good) == []
 
 
 if __name__ == "__main__":

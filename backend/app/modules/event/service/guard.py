@@ -54,6 +54,9 @@ ALLOWED_EVENT_NAMES = frozenset(
         "policy_enforced",
         "guardrail_triggered",
         "context_assembled",
+        # P5 插件市场（方案 §5.5）：客户端从企业市场装完插件后上报。服务端先放行，
+        # 客户端接线前不会有这条；接线后不必再等一次服务端发版。
+        "plugin_installed",
     }
 )
 

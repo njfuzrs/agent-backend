@@ -8,7 +8,7 @@
 
 本仓是 **Agent Backend**（企业级 Agent 后端）：sid-code 与 claude-trace 共同面对的服务端，控制面（policy / flag / 身份）与数据面（轨迹 / 事件）同仓部署、鉴权隔离。
 
-轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`），auth（管理台飞书登录与人员身份）是第七个（`modules/auth/`），feishu（委托授权：以员工本人飞书权限读文档）是第八个（`modules/feishu/`）。
+轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`），auth（管理台飞书登录与人员身份）是第七个（`modules/auth/`），feishu（委托授权：以员工本人飞书权限读文档）是第八个（`modules/feishu/`），marketplace（企业插件市场）是第九个（`modules/marketplace/`）。
 
 GitHub 目标仓名 `njfuzrs/agent-backend`。生产路径 `/opt/trajectory-platform`、nginx 前缀 `/traj/`、unit 文件名 `trajectory-platform.service` **故意不改**（采集 URL 已对外冻结）。
 
@@ -84,11 +84,16 @@ agent-backend/
 │   │       │   ├── schemas.py
 │   │       │   ├── router/     # login（/auth/**：options / login / logout / me / feishu start+callback）/ cli（P2：feishu/cli/start、cli/exchange、cli/logout）/ admin（/users/**）
 │   │       │   └── service/    # feishu（OAuth HTTP：换 / 刷新 token）/ states（state+nonce+PKCE）/ users（upsert / 角色 / 吊销 / 审计）
-│   │       └── feishu/         # 模块八：委托授权（P4）
-│   │           ├── model.py    # feishu_tokens（Fernet 密文）/ feishu_call_audit
+│   │       ├── feishu/         # 模块八：委托授权（P4）
+│   │       │   ├── model.py    # feishu_tokens（Fernet 密文）/ feishu_call_audit
+│   │       │   ├── schemas.py
+│   │       │   ├── router/     # mcp（POST /ctl/feishu/mcp，远程 MCP）/ admin（/feishu/calls、/feishu/grants）
+│   │       │   └── service/    # crypto / tokens（落库 + 刷新锁）/ openapi（用户身份调飞书）/ tools / queries
+│   │       └── marketplace/    # 模块九：企业插件市场（P5）
+│   │           ├── model.py    # market_items / market_versions / market_downloads / market_audit
 │   │           ├── schemas.py
-│   │           ├── router/     # mcp（POST /ctl/feishu/mcp，远程 MCP）/ admin（/feishu/calls、/feishu/grants）
-│   │           └── service/    # crypto / tokens（落库 + 刷新锁）/ openapi（用户身份调飞书）/ tools / queries
+│   │           ├── router/     # serve（GET /ctl/marketplace/index、/artifacts/{name}/{version}）/ admin（/marketplace/**）
+│   │           └── service/    # package（tar.gz 内存校验）/ catalog（上架 / 发布 / 下架 / 下发）
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   ├── src/
@@ -103,6 +108,7 @@ agent-backend/
 │   │   ├── modules/policy/       # 策略列表（device/team/org）
 │   │   ├── modules/event/        # 审计视图（/audit，与轨迹 join）
 │   │   ├── modules/auth/         # 用户列表（角色 / 吊销）+ 登录审计（/users）
+│   │   ├── modules/marketplace/  # 插件市场（/marketplace）：登记 / 上传 / 发布 / 下架、组件清单、下载统计、变更审计
 │   │   └── utils/          # 跨模块工具（format / chart / trajectoryDetail）
 │   └── vite.config.ts      # base: '/traj/'（冻结区，不要改）
 ├── data/                   # 数据目录（.gitignore）
@@ -140,6 +146,7 @@ agent-backend/
 - **管理台登录 = 飞书优先 + 口令应急**（`modules/auth/`）：`/auth/feishu/start` → 飞书 → `/auth/feishu/callback`，state 只存 hash、一次性、10 分钟，并与 HttpOnly nonce cookie 绑定（防登录 CSRF），PKCE S256。角色只有 admin / member：新用户是 member，所有管理接口 403；admin 由 `ADMIN_BOOTSTRAP_UNION_IDS` 引导、之后在「用户」页授予。飞书会话每次请求按主键查 `users.status/role`，吊销下一次请求即 401。口令登录由 `AUTH_PASSWORD_LOGIN_ENABLED`（默认 true）控制，关掉后 `/auth/login` 404、已有口令会话失效，每次口令登录写 `break_glass` 审计。P1 不存飞书 token（P4 起配了 `TOKEN_ENC_KEY` 才加密落库，见下条）。`/auth/**` 的免鉴权入口由 `test_boundaries.py` 的 `AUTH_PUBLIC_ROUTES` 白名单锁定
 - **CLI 飞书登录（P2）**：`GET /auth/feishu/cli/start` 建 kind=cli 的 state（记 CLI 端口 / PKCE challenge / cli_state / device_id），共用 `/auth/feishu/callback`，按 kind 分流：cli 签 60 秒一次性登录码（`login_codes`，只存 hash）并 302 回 `http://127.0.0.1:<port>/callback`（主机写死，只有端口可变）。`POST /auth/cli/exchange` 校验码 + S256(verifier) + device_id 后签设备凭据并写 `devices.user_ref`；设备已绑给另一个在职用户返回 409（不吊销对方），注册码也不能覆盖已绑人的设备。`POST /auth/cli/logout` 挂 `require_device`，吊销并解绑。吊销用户在同一事务里吊销其名下全部设备凭据。归因只认 `user_ref`，自报的 `devices.user_id` 不可信。P2 同样不存飞书 token
 - **委托授权（P4）**（`modules/feishu/`）：登录回调换到的 user_access_token / refresh_token 在配了 `TOKEN_ENC_KEY` 时用 MultiFernet 加密存进 `feishu_tokens`（没配就不存，`/ctl/feishu/mcp` 返回 503）。远程 MCP `POST /api/v1/ctl/feishu/mcp` 挂 `require_device`，按 `DeviceContext.user_ref` 取本人 token 调飞书，token 不出服务端；手写 JSON-RPC（initialize / ping / tools/list / tools/call），三个只读工具 `feishu_doc_read` / `feishu_doc_search` / `feishu_wiki_node`。刷新走进程锁 + PG `FOR UPDATE`，锁内二次检查 version，新 refresh_token 先 commit 再交出 access；refresh 失败删 token 行、提示重新 `sid-code login`，**绝不降级到 tenant_access_token**。每次调用写一行 `feishu_call_audit`（只记文档 token，不记内容和搜索词）。吊销用户同一事务删 token。门禁 ⑫：auth / feishu 的 logger 实参禁止引用 token 变量（AST），feishu 模块禁止出现 tenant / app access token
+- **插件市场（P5）**（`modules/marketplace/`）：管理台登记条目（org / 可选 team 可见）→ 上传 tar.gz（落 draft）→ 写理由发布；版本不可覆盖、不可删，下架（yank）是终态。上传在内存里校验，从不解包落盘：plugin.json 必须在包根，规则与客户端 `validateManifest` 同一份并要求 semver；`..` / 绝对路径 / 盘符 / 反斜杠 / 符号链接 / 硬链接 / 非普通文件一律 422；组件路径必须是包内相对路径且存在；有压缩包与解压后大小上限。设备端 `GET /ctl/marketplace/index`（ETag，按 semver 取 latest，含组件清单）与 `/artifacts/{name}/{version}` 都挂 `require_device`；看不见 / draft → 404（不区分），yanked → 410，存储里的制品哈希与登记不一致 → 500 不下发。每次下载写 `market_downloads`（user_ref 取自凭据）。`plugin_installed` 已进事件白名单。`strictKnownMarketplaces` 策略字段**未开放**：按约定等客户端接线后再加。管理台「市场」页（`/marketplace`）：登记、拖拽上传包、展开看组件清单（hooks / MCP 地址单独标出）、写理由发布 / 下架、按人看下载、变更审计
 - **身份落账（P3）**：`events.user_ref` / `usage_ledger.user_ref` 入库时从 `DeviceContext` 取（= 上报那一刻 `devices.user_ref` 的快照），body 里的同名字段一律忽略；未登录设备为 NULL。不建 FK、旧行不回填：设备换过人时历史仍记在当时的人头上。管理台按人看走 `GET /usage/ledger/stats/by-user`（默认 daily，NULL 合成「未登录」一行，合计与 by-scope 对齐）与列表的 `user_ref` 筛选。轨迹的 `user_id` 仍是自报（冻结的上传通道认不出人），是弱归因
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400
