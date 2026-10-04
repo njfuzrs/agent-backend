@@ -8,7 +8,7 @@
 
 本仓是 **Agent Backend**（企业级 Agent 后端）：sid-code 与 claude-trace 共同面对的服务端，控制面（policy / flag / 身份）与数据面（轨迹 / 事件）同仓部署、鉴权隔离。
 
-轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`），auth（管理台飞书登录与人员身份）是第七个（`modules/auth/`）。
+轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`），auth（管理台飞书登录与人员身份）是第七个（`modules/auth/`），feishu（委托授权：以员工本人飞书权限读文档）是第八个（`modules/feishu/`）。
 
 GitHub 目标仓名 `njfuzrs/agent-backend`。生产路径 `/opt/trajectory-platform`、nginx 前缀 `/traj/`、unit 文件名 `trajectory-platform.service` **故意不改**（采集 URL 已对外冻结）。
 
@@ -79,11 +79,16 @@ agent-backend/
 │   │       │   ├── schemas.py
 │   │       │   ├── router/     # ingest（POST /usage/ledger）/ serve（GET /ctl/budget）/ admin
 │   │       │   └── service/    # ingest（upsert）/ budgets（求值+CRUD）/ queries / guard
-│   │       └── auth/           # 模块七：管理台飞书登录与人员身份（P1）
-│   │           ├── model.py    # users / auth_states / login_codes / auth_audit
+│   │       ├── auth/           # 模块七：管理台飞书登录与人员身份（P1）
+│   │       │   ├── model.py    # users / auth_states / login_codes / auth_audit
+│   │       │   ├── schemas.py
+│   │       │   ├── router/     # login（/auth/**：options / login / logout / me / feishu start+callback）/ cli（P2：feishu/cli/start、cli/exchange、cli/logout）/ admin（/users/**）
+│   │       │   └── service/    # feishu（OAuth HTTP：换 / 刷新 token）/ states（state+nonce+PKCE）/ users（upsert / 角色 / 吊销 / 审计）
+│   │       └── feishu/         # 模块八：委托授权（P4）
+│   │           ├── model.py    # feishu_tokens（Fernet 密文）/ feishu_call_audit
 │   │           ├── schemas.py
-│   │           ├── router/     # login（/auth/**：options / login / logout / me / feishu start+callback）/ cli（P2：feishu/cli/start、cli/exchange、cli/logout）/ admin（/users/**）
-│   │           └── service/    # feishu（OAuth HTTP）/ states（state+nonce+PKCE）/ users（upsert / 角色 / 吊销 / 审计）
+│   │           ├── router/     # mcp（POST /ctl/feishu/mcp，远程 MCP）/ admin（/feishu/calls、/feishu/grants）
+│   │           └── service/    # crypto / tokens（落库 + 刷新锁）/ openapi（用户身份调飞书）/ tools / queries
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   ├── src/
@@ -132,8 +137,9 @@ agent-backend/
 - **schema 演进只有一条路**：`alembic upgrade head`。原 `init_db()` 的 `create_all` + `_migrate_sqlite_columns()` 已删除 —— 前者不改已有表的列，后者被 `is_sqlite` 挡住（生产是 PG，等于生产无加列路径）。运行时代码不得建表，由边界测试拦截
 - **双平面鉴权隔离**：数据面（`verify_upload_token` / `verify_basic_auth`）与控制面（`require_device`）两条依赖链互不引用。控制面被打穿等于全体客户端护栏被关，所以不与数据面共用凭据。`/ctl/` 端点必须挂 `require_device`（签发入口 `/ctl/enroll` 除外走一次性注册码；`GET /ctl/flags` 是客户端裸 fetch 的有意豁免）。`GET /ctl/policy` **必须**挂 `require_device`，不要加进豁免名单。`POST /api/v1/events` 与 `POST /api/v1/usage/ledger` 数据面方向、控制面鉴权，**不在 `/ctl/` 下**，现有门禁 ② 扫不到，由 `test_events_ingest_requires_device` / `test_usage_ledger_ingest_requires_device` 专门盯。`GET /ctl/budget` 虽在 `/ctl/` 下，仍另有 `test_budget_serve_requires_device` 盯豁免名单。由边界测试反射检查
 - **管理台凭据不落 localStorage**：独立登录页走 `/api/v1/auth/login` 下发 HttpOnly + SameSite cookie（无状态 HMAC 签名，跨 worker 有效）。未登录或 401 跳 `/login`。Basic Auth 保留给脚本与 curl
-- **管理台登录 = 飞书优先 + 口令应急**（`modules/auth/`）：`/auth/feishu/start` → 飞书 → `/auth/feishu/callback`，state 只存 hash、一次性、10 分钟，并与 HttpOnly nonce cookie 绑定（防登录 CSRF），PKCE S256。角色只有 admin / member：新用户是 member，所有管理接口 403；admin 由 `ADMIN_BOOTSTRAP_UNION_IDS` 引导、之后在「用户」页授予。飞书会话每次请求按主键查 `users.status/role`，吊销下一次请求即 401。口令登录由 `AUTH_PASSWORD_LOGIN_ENABLED`（默认 true）控制，关掉后 `/auth/login` 404、已有口令会话失效，每次口令登录写 `break_glass` 审计。P1 **不存**飞书 token（P4 才加密落库）。`/auth/**` 的免鉴权入口由 `test_boundaries.py` 的 `AUTH_PUBLIC_ROUTES` 白名单锁定
+- **管理台登录 = 飞书优先 + 口令应急**（`modules/auth/`）：`/auth/feishu/start` → 飞书 → `/auth/feishu/callback`，state 只存 hash、一次性、10 分钟，并与 HttpOnly nonce cookie 绑定（防登录 CSRF），PKCE S256。角色只有 admin / member：新用户是 member，所有管理接口 403；admin 由 `ADMIN_BOOTSTRAP_UNION_IDS` 引导、之后在「用户」页授予。飞书会话每次请求按主键查 `users.status/role`，吊销下一次请求即 401。口令登录由 `AUTH_PASSWORD_LOGIN_ENABLED`（默认 true）控制，关掉后 `/auth/login` 404、已有口令会话失效，每次口令登录写 `break_glass` 审计。P1 不存飞书 token（P4 起配了 `TOKEN_ENC_KEY` 才加密落库，见下条）。`/auth/**` 的免鉴权入口由 `test_boundaries.py` 的 `AUTH_PUBLIC_ROUTES` 白名单锁定
 - **CLI 飞书登录（P2）**：`GET /auth/feishu/cli/start` 建 kind=cli 的 state（记 CLI 端口 / PKCE challenge / cli_state / device_id），共用 `/auth/feishu/callback`，按 kind 分流：cli 签 60 秒一次性登录码（`login_codes`，只存 hash）并 302 回 `http://127.0.0.1:<port>/callback`（主机写死，只有端口可变）。`POST /auth/cli/exchange` 校验码 + S256(verifier) + device_id 后签设备凭据并写 `devices.user_ref`；设备已绑给另一个在职用户返回 409（不吊销对方），注册码也不能覆盖已绑人的设备。`POST /auth/cli/logout` 挂 `require_device`，吊销并解绑。吊销用户在同一事务里吊销其名下全部设备凭据。归因只认 `user_ref`，自报的 `devices.user_id` 不可信。P2 同样不存飞书 token
+- **委托授权（P4）**（`modules/feishu/`）：登录回调换到的 user_access_token / refresh_token 在配了 `TOKEN_ENC_KEY` 时用 MultiFernet 加密存进 `feishu_tokens`（没配就不存，`/ctl/feishu/mcp` 返回 503）。远程 MCP `POST /api/v1/ctl/feishu/mcp` 挂 `require_device`，按 `DeviceContext.user_ref` 取本人 token 调飞书，token 不出服务端；手写 JSON-RPC（initialize / ping / tools/list / tools/call），三个只读工具 `feishu_doc_read` / `feishu_doc_search` / `feishu_wiki_node`。刷新走进程锁 + PG `FOR UPDATE`，锁内二次检查 version，新 refresh_token 先 commit 再交出 access；refresh 失败删 token 行、提示重新 `sid-code login`，**绝不降级到 tenant_access_token**。每次调用写一行 `feishu_call_audit`（只记文档 token，不记内容和搜索词）。吊销用户同一事务删 token。门禁 ⑫：auth / feishu 的 logger 实参禁止引用 token 变量（AST），feishu 模块禁止出现 tenant / app access token
 - **身份落账（P3）**：`events.user_ref` / `usage_ledger.user_ref` 入库时从 `DeviceContext` 取（= 上报那一刻 `devices.user_ref` 的快照），body 里的同名字段一律忽略；未登录设备为 NULL。不建 FK、旧行不回填：设备换过人时历史仍记在当时的人头上。管理台按人看走 `GET /usage/ledger/stats/by-user`（默认 daily，NULL 合成「未登录」一行，合计与 by-scope 对齐）与列表的 `user_ref` 筛选。轨迹的 `user_id` 仍是自报（冻结的上传通道认不出人），是弱归因
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400

@@ -20,6 +20,7 @@ from app.modules.auth.model import (
     User,
 )
 from app.modules.auth.service.feishu import FeishuUser
+from app.modules.feishu.service import tokens as feishu_tokens
 from app.modules.identity.service import login as device_login
 
 logger = get_logger("agent.auth.users")
@@ -155,7 +156,8 @@ async def set_status(db: AsyncSession, user_id: int, revoked: bool, *, actor: st
 
     吊销同一个事务里连带吊销他名下全部设备凭据（P2），CLI 下一次请求即 401。
     恢复**不**恢复凭据：旧凭据已经作废，本人重新 `sid-code auth login` 即可。
-    飞书 token 要到 P4 才落库，那时在这里一并删。
+    同一事务里删掉他的飞书 token（P4）：服务端代理读文档的能力随吊销即刻消失，
+    恢复后本人重新登录才会重新授权。
     """
     user = await _get_user_or_404(db, user_id)
     target = STATUS_REVOKED if revoked else STATUS_ACTIVE
@@ -167,7 +169,10 @@ async def set_status(db: AsyncSession, user_id: int, revoked: bool, *, actor: st
     user.updated_at = utc_now_iso()
     detail = None
     if revoked:
-        detail = {"credentials_revoked": await device_login.revoke_user_devices(db, user.id)}
+        detail = {
+            "credentials_revoked": await device_login.revoke_user_devices(db, user.id),
+            "feishu_token_deleted": await feishu_tokens.delete_for_user(db, user.id),
+        }
     audit(db, event=EVENT_REVOKE if revoked else EVENT_RESTORE, actor=actor, user_id=user.id, detail=detail)
     await db.commit()
     logger.info(

@@ -16,6 +16,9 @@
 
 失败一律 302 回 /login?error=<枚举>，不签发会话。错误枚举见 LOGIN_ERRORS。
 
+callback 拿到的飞书 token：配了 TOKEN_ENC_KEY 时交给 feishu 模块加密落库（P4 委托授权），
+否则用完即弃。
+
 callback 与 CLI 登录（router/cli.py）共用：state.kind=cli 时不签会话，改签一次性登录码
 并 302 回 http://127.0.0.1:<port>/callback；state 通过之后的失败也回 CLI（?error=<同一枚举>）。
 """
@@ -44,6 +47,7 @@ from app.modules.auth.model import STATUS_ACTIVE
 from app.modules.auth.schemas import LoginOptions, LoginRequest, MeResponse
 from app.modules.auth.service import feishu, states
 from app.modules.auth.service import users as users_service
+from app.modules.feishu.service import tokens as feishu_tokens
 
 auth_logger = get_logger("agent.auth")
 logger = get_logger("agent.auth.login")
@@ -213,12 +217,10 @@ async def feishu_callback(
         return fail("state_rejected", "invalid_state")
 
     try:
-        access_token = await feishu.exchange_code(code, states.pkce_verifier(state))
-        info = await feishu.fetch_user_info(access_token)
+        token_set = await feishu.exchange_code(code, states.pkce_verifier(state))
+        info = await feishu.fetch_user_info(token_set.access_token)
     except feishu.FeishuError:
         return fail("feishu_failed", "feishu_failed")
-    # P1 不保存 token：登录只为拿身份。显式丢掉引用，免得后来人顺手存了。
-    del access_token
 
     expected_tenant = settings.login.FEISHU_TENANT_KEY
     if expected_tenant and info.tenant_key != expected_tenant:
@@ -239,6 +241,11 @@ async def feishu_callback(
         return fail("user_revoked", "revoked")
 
     user.last_login_at = utc_now_iso()
+    # 委托授权（P4）：配了 TOKEN_ENC_KEY 才加密落库，供远程 MCP 以本人身份读文档。
+    # 没配就用完即弃 —— 登录只为拿身份。web 与 CLI 登录都存：最近一次授权覆盖旧的。
+    if settings.login.delegation_enabled:
+        await feishu_tokens.store_grant(db, user.id, token_set)
+    del token_set
     if is_cli:
         # CLI：不签会话 cookie，签 60 秒一次性登录码，回跳 127.0.0.1。
         login_code = await states.create_login_code(

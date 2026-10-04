@@ -20,6 +20,7 @@ import app.modules.auth.model  # noqa: F401
 import app.modules.bridge.model  # noqa: F401
 import app.modules.cost.model  # noqa: F401
 import app.modules.event.model  # noqa: F401
+import app.modules.feishu.model  # noqa: F401
 import app.modules.flag.model  # noqa: F401
 import app.modules.identity.model  # noqa: F401
 import app.modules.policy.model  # noqa: F401
