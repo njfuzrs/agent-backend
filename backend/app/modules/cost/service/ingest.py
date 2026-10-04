@@ -14,7 +14,7 @@ events 用 202 是因为一批 ≤500 条；这里永远是 1 行。
 - 在写入路径上算 used_usd / 触发告警 —— 告警是客户端拿下发结果自己判。
   写入路径做聚合会让 upsert 的 p95 绑在全 org 求和上。
 
-`device_id` / `org_id` / `team_id` 由调用方从 `DeviceContext` 传入，
+`device_id` / `org_id` / `team_id` / `user_ref` 由调用方从 `DeviceContext` 传入，
 **绝不从 body 取**。
 """
 
@@ -35,6 +35,7 @@ _COLS = (
     "device_id",
     "org_id",
     "team_id",
+    "user_ref",
     "session_id",
     "ts",
     "received_at",
@@ -98,6 +99,7 @@ async def upsert_ledger(
     device_id: str,
     org_id: str,
     team_id: str,
+    user_ref: int | None = None,
 ) -> UsageIngestResponse:
     """一条语句 upsert。身份从凭据，业务列从 parsed。
 
@@ -110,6 +112,8 @@ async def upsert_ledger(
         "device_id": device_id,
         "org_id": org_id,
         "team_id": team_id or "",
+        # 随整行覆盖：会话归最近一次上报时设备绑定的人
+        "user_ref": user_ref,
         "received_at": received_at,
     }
 

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -34,6 +35,7 @@ function errorDetail(err: unknown): string {
 
 export default function UserList() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [auditUser, setAuditUser] = useState<number | undefined>(undefined)
 
   const { data: users, isLoading } = useQuery({ queryKey: ['auth-users'], queryFn: fetchUsers })
@@ -111,6 +113,7 @@ export default function UserList() {
             <Button size="small" onClick={() => statusMutation.mutate({ id: r.id, revoke: false })}>恢复</Button>
           )}
           <Button size="small" type="link" onClick={() => setAuditUser(r.id)}>登录记录</Button>
+          <Button size="small" type="link" onClick={() => navigate(`/cost?user_ref=${r.id}`)}>用量</Button>
         </Space>
       ),
     },

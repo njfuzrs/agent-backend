@@ -43,6 +43,8 @@ class EventItem(BaseModel):
     device_id: str
     org_id: str
     team_id: str = ""
+    # 上报时设备绑定的人（users.id）。服务端从凭据写入，可信；NULL = 未登录设备
+    user_ref: Optional[int] = None
     session_id: Optional[str] = None
     client_ts: int
     received_at: str

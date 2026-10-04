@@ -7,6 +7,7 @@ import type {
   BudgetPeriod,
   BudgetScopeType,
   UsageByScopeResponse,
+  UsageByUserResponse,
   UsageLedgerListResponse,
 } from '../types/cost'
 
@@ -30,8 +31,19 @@ export async function fetchUsageByScope(params: {
   return data
 }
 
+/** 按人。归属看账本行上的 user_ref（上报那一刻），不看设备今天归谁。session 周期服务端 400。 */
+export async function fetchUsageByUser(params: {
+  period: string
+  period_key?: string
+  org_id?: string
+}): Promise<UsageByUserResponse> {
+  const { data } = await api.get('/usage/ledger/stats/by-user', { params })
+  return data
+}
+
 export async function fetchUsageLedger(params: {
   device_id?: string
+  user_ref?: number
   org_id?: string
   since?: string
   limit?: number

@@ -38,10 +38,11 @@ async def list_events(
     event_name: Optional[str] = None,
     org_id: Optional[str] = None,
     since: Optional[str] = None,
+    user_ref: Optional[int] = None,
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    """下钻列表。只做契约 §8 那几个维度，metadata 内部字段筛选是 BI，不做。"""
+    """下钻列表。只做契约 §8 那几个维度，外加按人（user_ref，P3）。metadata 内部字段筛选是 BI，不做。"""
     return await query_service.list_events(
         db,
         session_id=session_id,
@@ -49,6 +50,7 @@ async def list_events(
         event_name=event_name,
         org_id=org_id,
         since=since,
+        user_ref=user_ref,
         limit=limit,
     )
 

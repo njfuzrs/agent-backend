@@ -32,6 +32,7 @@ import {
   fetchBudgetAudit,
   fetchBudgets,
   fetchUsageByScope,
+  fetchUsageByUser,
   fetchUsageLedger,
   setBudgetEnabled,
   updateBudget,
@@ -44,6 +45,7 @@ import type {
   BudgetPeriod,
   BudgetScopeType,
   UsageByScopeItem,
+  UsageByUserItem,
   UsageLedgerItem,
 } from '../types/cost'
 import { formatTokens } from '../../../utils/format'
@@ -58,6 +60,9 @@ const PERIODS: { value: BudgetPeriod; label: string }[] = [
   { value: 'weekly', label: '周' },
   { value: 'daily', label: '日' },
 ]
+
+/** 下钻目标：按设备或按人。按人只能下钻到已登录的人 —— 「未登录」一行没有 user_ref 可筛。 */
+type DrillTarget = { kind: 'device'; deviceId: string } | { kind: 'user'; userRef: number; label: string }
 
 /** 金额。0 要显示 $0.00（有上报但没花钱），不能像 formatCurrency 那样显示 '-'。 */
 function money(value: number): string {
@@ -109,11 +114,16 @@ export default function CostOverview() {
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const deviceFromUrl = searchParams.get('device_id') || undefined
+  // 用户页「用量」跳过来时带 user_ref，只看这一个人
+  const userRefParam = searchParams.get('user_ref')
+  const userFromUrl = userRefParam && /^\d+$/.test(userRefParam) ? Number(userRefParam) : undefined
 
   const [period, setPeriod] = useState<BudgetPeriod>('monthly')
   const [orgFilter, setOrgFilter] = useState<string | undefined>()
   const [onlyOverBudget, setOnlyOverBudget] = useState(false)
-  const [drillDeviceId, setDrillDeviceId] = useState<string | null>(null)
+  const [drill, setDrill] = useState<DrillTarget | null>(null)
+  // 按人默认看「今天」：回答的是「A 今天几个会话、花了多少」
+  const [userPeriod, setUserPeriod] = useState<BudgetPeriod>('daily')
 
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<BudgetItem | null>(null)
@@ -137,6 +147,19 @@ export default function CostOverview() {
     queryFn: () => fetchUsageByScope({ period, org_id: orgFilter }),
   })
 
+  const { data: byUser, isLoading: userLoading } = useQuery({
+    queryKey: ['usage-by-user', userPeriod, orgFilter],
+    queryFn: () => fetchUsageByUser({ period: userPeriod, org_id: orgFilter }),
+  })
+
+  const userRows = useMemo(() => {
+    const items = byUser?.items ?? []
+    return userFromUrl === undefined ? items : items.filter(row => row.user_ref === userFromUrl)
+  }, [byUser?.items, userFromUrl])
+
+  const drillDeviceId = drill?.kind === 'device' ? drill.deviceId : null
+  const drillUserRef = drill?.kind === 'user' ? drill.userRef : null
+
   const { data: budgets, isLoading: budgetsLoading } = useQuery({
     queryKey: ['budgets', orgFilter],
     queryFn: () => fetchBudgets(orgFilter ? { org_id: orgFilter } : {}),
@@ -149,12 +172,18 @@ export default function CostOverview() {
   })
 
   const { data: ledger, isLoading: ledgerLoading } = useQuery({
-    queryKey: ['usage-ledger', drillDeviceId],
-    queryFn: () => fetchUsageLedger({ device_id: drillDeviceId ?? undefined, limit: 200 }),
-    enabled: drillDeviceId !== null,
+    queryKey: ['usage-ledger', drillDeviceId, drillUserRef],
+    queryFn: () =>
+      fetchUsageLedger({
+        device_id: drillDeviceId ?? undefined,
+        user_ref: drillUserRef ?? undefined,
+        limit: 200,
+      }),
+    enabled: drill !== null,
   })
 
   // 账本先到、轨迹后到（进行中的会话）。有轨迹行才让 session_id 可点，与 M4 的 join 同款。
+  // 按人下钻时轨迹没有可信的人（上传通道自报），所以只按设备查轨迹；按人时 session_id 不做链接。
   const { data: drillTrajectories } = useQuery({
     queryKey: ['cost-drill-trajectories', drillDeviceId],
     queryFn: () => fetchTrajectories({ device_id: drillDeviceId, page_size: 100 }),
@@ -220,6 +249,7 @@ export default function CostOverview() {
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['budgets'] }),
       queryClient.invalidateQueries({ queryKey: ['usage-by-scope'] }),
+      queryClient.invalidateQueries({ queryKey: ['usage-by-user'] }),
     ])
 
   const closeForm = () => {
@@ -345,8 +375,74 @@ export default function CostOverview() {
   }
 
   const openDrill = (deviceId: string) => {
-    setDrillDeviceId(deviceId)
+    setDrill({ kind: 'device', deviceId })
   }
+
+  const clearUserFilter = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('user_ref')
+    setSearchParams(next, { replace: true })
+  }
+
+  const userLabel = (row: UsageByUserItem) => row.name || row.union_id || `#${row.user_ref}`
+
+  const userColumns: ColumnsType<UsageByUserItem> = [
+    {
+      title: '人',
+      key: 'user',
+      render: (_, row) =>
+        row.user_ref === null ? (
+          <Space direction="vertical" size={0}>
+            <Tag>未登录设备</Tag>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              注册码设备，没有绑人
+            </Typography.Text>
+          </Space>
+        ) : (
+          <Space direction="vertical" size={0}>
+            <Typography.Text strong>{userLabel(row)}</Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {row.union_id || '用户已删除'}
+            </Typography.Text>
+          </Space>
+        ),
+    },
+    { title: '设备数', dataIndex: 'devices', align: 'right', width: 90 },
+    { title: '会话数', dataIndex: 'sessions', align: 'right', width: 90 },
+    {
+      title: 'cost_usd',
+      dataIndex: 'cost_usd',
+      align: 'right',
+      width: 110,
+      sorter: (a, b) => a.cost_usd - b.cost_usd,
+      render: (v: number) => <Typography.Text strong>{money(v)}</Typography.Text>,
+    },
+    { title: 'side_cost_usd', dataIndex: 'side_cost_usd', align: 'right', width: 130, render: optionalMoney },
+    {
+      title: 'prompt_total',
+      dataIndex: 'prompt_total',
+      align: 'right',
+      width: 120,
+      render: (v: number) => formatTokens(v),
+    },
+    { title: '最近上报', dataIndex: 'last_received_at', width: 150, render: formatTs },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 100,
+      render: (_, row) =>
+        row.user_ref === null ? (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ) : (
+          <Button
+            size="small"
+            onClick={() => setDrill({ kind: 'user', userRef: row.user_ref as number, label: userLabel(row) })}
+          >
+            会话明细
+          </Button>
+        ),
+    },
+  ]
 
   const clearDeviceFilter = () => {
     const next = new URLSearchParams(searchParams)
@@ -552,6 +648,10 @@ export default function CostOverview() {
           <Typography.Text code>{id}</Typography.Text>
         ),
     },
+    // 按人下钻时一个人可能有多台设备，要看得出是哪台
+    ...(drill?.kind === 'user'
+      ? [{ title: '设备', dataIndex: 'device_id', width: 160, ellipsis: true } as const]
+      : []),
     { title: '会话时间', dataIndex: 'ts', width: 150, render: formatEpochSeconds },
     {
       title: '到达',
@@ -697,6 +797,40 @@ export default function CostOverview() {
           />
         </Col>
       </Row>
+
+      <Card
+        title="按人看用量"
+        extra={
+          <Space>
+            <Radio.Group
+              value={userPeriod}
+              onChange={e => setUserPeriod(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+              options={[...PERIODS].reverse()}
+            />
+            {userFromUrl !== undefined && (
+              <Button size="small" onClick={clearUserFilter}>
+                取消人员筛选
+              </Button>
+            )}
+          </Space>
+        }
+      >
+        <Table
+          rowKey={row => (row.user_ref === null ? 'anonymous' : String(row.user_ref))}
+          size="small"
+          loading={userLoading}
+          columns={userColumns}
+          dataSource={userRows}
+          pagination={false}
+        />
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          周期 {byUser?.period ?? userPeriod} / {byUser?.period_key ?? '—'}，组织筛选与下方共用。
+          归属看每条账本上报那一刻设备绑定的人（服务端从设备凭据写入，客户端改不了）；
+          设备换过人时，旧会话仍算在原来的人头上。各行合计与「按设备」同周期一致。
+        </Typography.Text>
+      </Card>
 
       <Card
         title="按设备看用量"
@@ -963,11 +1097,11 @@ export default function CostOverview() {
       </Modal>
 
       <Modal
-        open={drillDeviceId !== null}
-        title={`会话明细 · ${drillDeviceId ?? ''}`}
+        open={drill !== null}
+        title={`会话明细 · ${drill?.kind === 'user' ? drill.label : drillDeviceId ?? ''}`}
         footer={null}
         width={1200}
-        onCancel={() => setDrillDeviceId(null)}
+        onCancel={() => setDrill(null)}
       >
         <Space direction="vertical" size="small" style={{ width: '100%' }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>

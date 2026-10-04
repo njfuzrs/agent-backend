@@ -57,6 +57,7 @@ _COLS = (
     "device_id",
     "org_id",
     "team_id",
+    "user_ref",
     "session_id",
     "client_ts",
     "received_at",
@@ -125,10 +126,11 @@ async def ingest_events(
     device_id: str,
     org_id: str,
     team_id: str,
+    user_ref: int | None = None,
 ) -> EventIngestResponse:
     """校验 + 批量入库。返回 accepted / deduped / rejected。
 
-    `device_id` / `org_id` / `team_id` 由调用方从 `DeviceContext` 传入，
+    `device_id` / `org_id` / `team_id` / `user_ref` 由调用方从 `DeviceContext` 传入，
     **绝不从 body 取** —— body 里的同名字段是攻击面（契约 §1）。这里不接受
     「body 有就用 body 的」这种回退：那等于让上报方自己声明归属。
     """
@@ -166,6 +168,8 @@ async def ingest_events(
                 "device_id": device_id,
                 "org_id": org_id,
                 "team_id": team_id,
+                # 不进指纹：同一事件重放时设备若已换人，仍按第一次入库那行去重
+                "user_ref": user_ref,
                 "session_id": _session_id_of(metadata),
                 "client_ts": client_ts,
                 "received_at": received_at,
