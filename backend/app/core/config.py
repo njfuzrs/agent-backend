@@ -98,7 +98,8 @@ class LoginSettings(BaseSettings):
     # 纵深防御：只认这个租户的账号。留空时不校验（首次登录前拿不到它），
     # 登录后从 users 表的 tenant_key 列取值填回来。
     FEISHU_TENANT_KEY: str = ""
-    # 授权页请求的 scope，空格分隔。登录本身不需要 scope；P4 读文档时再加。
+    # 授权页请求的 scope，空格分隔。登录本身不需要 scope；P4 委托授权要带上
+    # offline_access（否则不返回 refresh_token）与文档 / 知识库只读、文档搜索的 scope（名字在开发者后台现查）。
     FEISHU_LOGIN_SCOPE: str = ""
 
     # 引导管理员：逗号分隔的 union_id。列在这里的人每次登录都会被确保为 admin。
@@ -109,9 +110,21 @@ class LoginSettings(BaseSettings):
     # 只管浏览器登录页；脚本 / curl 用的 HTTP Basic 不受影响。
     AUTH_PASSWORD_LOGIN_ENABLED: bool = True
 
+    # 委托授权（P4）：飞书 user_access_token / refresh_token 的静态加密密钥（Fernet）。
+    # 逗号分隔多把，第一把加密、全部可解密 —— 轮换时把新钥放最前、旧钥留在后面。
+    # 留空则委托授权关闭：登录照常，但 token 不落库，/ctl/feishu/mcp 返回 503。
+    # ⚠️ 只写进服务器 .env。生成：python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+    TOKEN_ENC_KEY: str = ""
+    # feishu_doc_read 单篇返回给 Agent 的最大字符数，超出截断并注明。
+    FEISHU_DOC_MAX_CHARS: int = 60000
+
     @property
     def feishu_enabled(self) -> bool:
         return bool(self.FEISHU_APP_ID and self.FEISHU_APP_SECRET and self.PUBLIC_BASE_URL)
+
+    @property
+    def delegation_enabled(self) -> bool:
+        return self.feishu_enabled and bool(self.TOKEN_ENC_KEY.strip())
 
     @property
     def bootstrap_union_ids(self) -> set[str]:

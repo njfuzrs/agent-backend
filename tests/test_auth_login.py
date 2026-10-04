@@ -51,6 +51,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(login, "FEISHU_TENANT_KEY", TENANT)
     monkeypatch.setattr(login, "ADMIN_BOOTSTRAP_UNION_IDS", ADMIN_UNION)
     monkeypatch.setattr(login, "AUTH_PASSWORD_LOGIN_ENABLED", True)
+    # 委托授权默认关：P1 / P2 的用例断言「token 不落库」。P4 的用例自己打开。
+    monkeypatch.setattr(login, "TOKEN_ENC_KEY", "")
 
     engine = create_async_engine(db_url, echo=False)
     session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -69,11 +71,15 @@ def client(tmp_path, monkeypatch):
 
     calls = {"exchange": []}
 
-    async def fake_exchange(code: str, verifier: str) -> str:
+    async def fake_exchange(code: str, verifier: str) -> feishu.FeishuTokenSet:
         calls["exchange"].append((code, verifier))
         if code == "bad":
             raise feishu.FeishuError("token", "20003")
-        return "tok:" + code
+        return feishu.FeishuTokenSet(
+            access_token="tok:" + code, expires_in=7200,
+            refresh_token="rt:" + code, refresh_expires_in=604800,
+            scope="offline_access docx:document:readonly",
+        )
 
     async def fake_user_info(token: str) -> feishu.FeishuUser:
         union_id, tenant = token[4:].split("@")

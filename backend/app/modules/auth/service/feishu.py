@@ -1,4 +1,4 @@
-"""飞书 OAuth 客户端：授权页地址、授权码换 token、取用户信息。
+"""飞书 OAuth 客户端：授权页地址、授权码换 token、刷新 token、取用户信息。
 
 只做 HTTP，不碰库。路由层通过模块属性调用（`feishu.exchange_code(...)`），
 测试替换这两个函数即可，不用起假的飞书。
@@ -7,10 +7,11 @@
 - app_secret 只在请求体里出现，不进日志、不进异常消息。
 - 飞书的响应体不原样进日志（rag-service 那行 `logger.info(f"... {result}")` 把 token 打进了日志）。
   失败只带飞书的错误码。
-- P1 不保存 user_access_token：登录只为拿身份，用完即弃。P4 才加密落库。
+- token 只以 FeishuTokenSet 的形式交给调用方，由 feishu 模块加密落库（P4）；
+  没配 TOKEN_ENC_KEY 时登录用完即弃。FeishuTokenSet 的 repr 不含 token 明文。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
 import httpx
@@ -32,6 +33,24 @@ class FeishuError(Exception):
         super().__init__(f"feishu {stage} failed: {code}")
         self.stage = stage
         self.code = code
+
+
+# 飞书刷新接口的服务端错误（官方建议重试）。其余非 0 码一律视为 refresh_token 已不可用。
+TRANSIENT_CODES = frozenset({"network", "20050"})
+
+
+@dataclass(frozen=True)
+class FeishuTokenSet:
+    """一次换 token / 刷新的结果。时长以飞书响应为准，不硬编码（方案 §4）。
+
+    repr=False：这个对象一旦被误打进日志或异常消息，也只剩字段名。
+    """
+
+    access_token: str = field(repr=False)
+    expires_in: int
+    refresh_token: str = field(default="", repr=False)
+    refresh_expires_in: int = 0
+    scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -63,7 +82,7 @@ def authorize_url(state: str, code_challenge: str) -> str:
     return f"{AUTHORIZE_URL}?{urlencode(params)}"
 
 
-async def exchange_code(code: str, code_verifier: str) -> str:
+async def exchange_code(code: str, code_verifier: str) -> FeishuTokenSet:
     """授权码换 user_access_token。授权码 5 分钟有效、只能用一次，回调里立刻换。"""
     payload = {
         "grant_type": "authorization_code",
@@ -73,19 +92,51 @@ async def exchange_code(code: str, code_verifier: str) -> str:
         "redirect_uri": redirect_uri(),
         "code_verifier": code_verifier,
     }
+    return await _token_request("token", payload)
+
+
+async def refresh_user_token(refresh_token: str) -> FeishuTokenSet:
+    """refresh_token 换新的一对 token。
+
+    飞书的 refresh_token 一次性：成功后旧的立即作废，调用方必须在同一把锁里把新的落库
+    （方案 §6.4）。失败抛 FeishuError(stage="refresh")，code 在 TRANSIENT_CODES 里的可重试。
+    """
+    payload = {
+        "grant_type": "refresh_token",
+        "client_id": settings.login.FEISHU_APP_ID,
+        "client_secret": settings.login.FEISHU_APP_SECRET,
+        "refresh_token": refresh_token,
+    }
+    return await _token_request("refresh", payload)
+
+
+async def _token_request(stage: str, payload: dict) -> FeishuTokenSet:
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             resp = await client.post(TOKEN_URL, json=payload)
             body = resp.json()
     except (httpx.HTTPError, ValueError):
-        raise FeishuError("token", "network") from None
+        raise FeishuError(stage, "network") from None
     if not isinstance(body, dict) or body.get("code") not in (0, None):
-        raise FeishuError("token", str(body.get("code") if isinstance(body, dict) else "bad_body"))
+        raise FeishuError(stage, str(body.get("code") if isinstance(body, dict) else "bad_body"))
     # v2 端点直接返回 token 字段，没有 data 包装
     access = body.get("access_token")
     if not access:
-        raise FeishuError("token", "no_access_token")
-    return access
+        raise FeishuError(stage, "no_access_token")
+    return FeishuTokenSet(
+        access_token=access,
+        expires_in=_as_int(body.get("expires_in")),
+        refresh_token=body.get("refresh_token") or "",
+        refresh_expires_in=_as_int(body.get("refresh_token_expires_in")),
+        scope=body.get("scope") or "",
+    )
+
+
+def _as_int(value) -> int:
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 async def fetch_user_info(access_token: str) -> FeishuUser:

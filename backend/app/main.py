@@ -34,6 +34,8 @@ from app.modules.cost.router import ingest as cost_ingest
 from app.modules.cost.router import serve as cost_serve
 from app.modules.event.router import admin as event_admin
 from app.modules.event.router import ingest as event_ingest
+from app.modules.feishu.router import admin as feishu_admin
+from app.modules.feishu.router import mcp as feishu_mcp
 from app.modules.flag.router import admin as flag_admin
 from app.modules.flag.router import flags as flag_serve
 from app.modules.identity.router import admin as identity_admin
@@ -140,6 +142,9 @@ app.include_router(cost_serve.router, prefix="/api/v1")
 # bridge 的配对 REST。WebSocket 不在这里：它在独立 sidecar 进程里，
 # 主进程 --workers 2 装不下连接配对。见 modules/bridge/sidecar/main.py。
 app.include_router(bridge_serve.router, prefix="/api/v1")
+# 委托授权（P4）：远程 MCP，设备凭据 → 服务端取本人飞书 token → 以用户身份读文档。
+# token 不出服务端。必须挂 require_device，不进豁免名单（test_feishu_mcp_requires_device）。
+app.include_router(feishu_mcp.router, prefix="/api/v1")
 
 # ---- 管理台：身份 / flag / policy / event / cost（cookie 会话，给人看，不给客户端下发策略）----
 app.include_router(identity_admin.router, prefix="/api/v1")
@@ -150,6 +155,7 @@ app.include_router(cost_admin.ledger_router, prefix="/api/v1")
 app.include_router(cost_admin.budget_router, prefix="/api/v1")
 app.include_router(bridge_admin.router, prefix="/api/v1")
 app.include_router(users_admin.router, prefix="/api/v1")
+app.include_router(feishu_admin.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

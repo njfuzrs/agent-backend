@@ -25,6 +25,8 @@
        主应用不得挂 WebSocket 路由（挂上 + --workers 2 = 配对静默裂开）
     ⑪ /auth/** 的免鉴权入口是白名单（AUTH_PUBLIC_ROUTES）；飞书回调不在 /ctl/ 下；
        /users/** 挂 cookie 会话（admin）
+    ⑫ 委托授权（P4）：/ctl/feishu/mcp 挂 require_device 且不在豁免名单；/feishu/** 挂 cookie；
+       auth / feishu 模块的日志调用不得引用 token 变量；feishu 模块不得出现 tenant_access_token
 """
 
 import ast
@@ -44,7 +46,7 @@ APP_DIR = BACKEND_DIR / "app"
 DATA_PLANE_AUTH_SYMBOLS = {"verify_upload_token", "verify_basic_auth"}
 
 # 控制面模块（规划 §2.1）。M1-M5 逐个补齐，目录不存在时跳过。
-CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "event", "cost", "bridge"]
+CONTROL_PLANE_MODULES = ["identity", "flag", "policy", "event", "cost", "bridge", "feishu"]
 
 # 不属于控制面、但同样不得复用数据面鉴权的模块。auth 是管理台登录本身：
 # 它要是 import 了 verify_basic_auth，「关掉口令」就关不干净。
@@ -1065,6 +1067,112 @@ def test_users_admin_requires_web_session():
         seen += 1
         assert require_web_session in _route_deps(dependant), f"{sorted(methods)} {path} 没挂 require_web_session"
     assert seen >= 4, "用户管理端点不见了"
+
+
+# ---------------------------------------------------------------------------
+# ⑫ 委托授权（P4）
+# ---------------------------------------------------------------------------
+def test_feishu_mcp_requires_device():
+    """POST /ctl/feishu/mcp 必须挂 require_device，且不得进 CTL_AUTH_EXEMPTIONS。
+
+    它是「以员工本人身份读飞书」的入口：漏挂 = 任何人能拿到某个员工的文档。
+    门禁 ② 也会扫到，这条把失败说成人话，并锁死豁免名单。
+    """
+    from app.core.auth.control_plane import require_device
+    from app.main import app
+
+    seen = False
+    for path, methods, dependant in _iter_app_routes(app):
+        if path == "/api/v1/ctl/feishu/mcp":
+            seen = True
+            assert require_device in _route_deps(dependant), f"{sorted(methods)} {path} 没挂 require_device"
+    assert seen, "远程 MCP 端点不见了"
+    assert not any("/ctl/feishu" in p for _m, p in CTL_AUTH_EXEMPTIONS)
+
+
+def test_feishu_admin_requires_web_session():
+    """/feishu/**（调用审计 / 授权状态）必须挂 require_web_session（admin）。"""
+    from app.core.auth.session import require_web_session
+    from app.main import app
+
+    seen = 0
+    for path, methods, dependant in _iter_app_routes(app):
+        if not path.startswith("/api/v1/feishu/"):
+            continue
+        seen += 1
+        assert require_web_session in _route_deps(dependant), f"{sorted(methods)} {path} 没挂 require_web_session"
+    assert seen >= 2, "飞书管理端点不见了"
+
+
+# 日志调用里不得出现的变量 / 属性名（方案 §6.3：rag-service 把完整 token 打进日志的防复发）。
+TOKEN_NAMES = {"access_token", "refresh_token", "token_set", "tokens", "access_enc", "refresh_enc"}
+LOG_METHODS = {"debug", "info", "warning", "error", "exception"}
+
+
+def _token_refs_in_log_calls(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    bad = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr not in LOG_METHODS:
+            continue
+        recv = node.func.value
+        if not (isinstance(recv, ast.Name) and "logger" in recv.id):
+            continue
+        for arg in [*node.args, *(k.value for k in node.keywords)]:
+            for sub in ast.walk(arg):
+                name = sub.id if isinstance(sub, ast.Name) else sub.attr if isinstance(sub, ast.Attribute) else None
+                if name in TOKEN_NAMES:
+                    bad.append(f"{path.name}:{node.lineno} 日志引用了 {name}")
+    return bad
+
+
+def test_auth_and_feishu_logs_never_reference_tokens():
+    """auth / feishu 模块的 logger.*() 实参里不得出现 token 变量（AST 扫描）。
+
+    假门禁对策见 test_token_log_scan_catches_violation。
+    """
+    violations = []
+    for mod in ("auth", "feishu"):
+        for path in _iter_py_files(APP_DIR / "modules" / mod):
+            violations.extend(_token_refs_in_log_calls(path))
+    assert not violations, "日志里引用了 token:\n  " + "\n  ".join(violations)
+
+
+def test_token_log_scan_catches_violation(tmp_path):
+    """门禁自证：扫描器对违规写法必须报出来，对合规写法不报。"""
+    bad = tmp_path / "bad.py"
+    bad.write_text('logger.info("x", reason=row.refresh_token)\nlogger.warning("y", target_id=access_token)\n',
+                   encoding="utf-8")
+    assert len(_token_refs_in_log_calls(bad)) == 2
+    good = tmp_path / "good.py"
+    good.write_text('logger.info("x", event="e", outcome=result.outcome)\n', encoding="utf-8")
+    assert _token_refs_in_log_calls(good) == []
+
+
+def test_feishu_never_uses_tenant_token():
+    """方案 §1.2 不变量：委托授权拿不到用户 token 就拒绝，**不降级到机器人身份**。
+
+    feishu 模块（以及 auth 的飞书客户端）里不得出现 tenant_access_token 的获取或使用。
+    """
+    violations = []
+    targets = list(_iter_py_files(APP_DIR / "modules" / "feishu")) + [
+        APP_DIR / "modules" / "auth" / "service" / "feishu.py"
+    ]
+    for path in targets:
+        text = path.read_text(encoding="utf-8")
+        for needle in ("tenant_access_token/internal", "app_access_token"):
+            if needle in text:
+                violations.append(f"{path.relative_to(BACKEND_DIR)} 出现 {needle}")
+        # 代码里（非注释 / docstring）出现 tenant_access_token 也不行
+        tree = ast.parse(text)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name | ast.Attribute):
+                name = node.id if isinstance(node, ast.Name) else node.attr
+                if "tenant_access_token" in name or "tenant_token" in name:
+                    violations.append(f"{path.relative_to(BACKEND_DIR)}:{node.lineno} 引用了 {name}")
+    assert not violations, "委托授权不得降级到应用身份:\n  " + "\n  ".join(violations)
 
 
 if __name__ == "__main__":
