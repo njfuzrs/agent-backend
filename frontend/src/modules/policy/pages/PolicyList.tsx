@@ -91,6 +91,10 @@ function settingsSummary(settings: PolicySettings): string {
   if (settings.disabledModes?.length) bits.push(`模式 ${settings.disabledModes.join('/')}`)
   if (settings.strictPluginOnlyCustomization) bits.push('锁定定制化')
   if (settings.bridgeEnabled === false) bits.push('禁止遥控')
+  if (settings.strictKnownMarketplaces) {
+    const n = settings.strictKnownMarketplaces.length
+    bits.push(n ? `插件仅限 ${n} 个市场` : '禁一切非内置插件')
+  }
   return bits.join(' · ') || '（无摘要）'
 }
 
@@ -111,6 +115,9 @@ type FormValues = {
   strictAll?: boolean
   strictSurfaces?: string[]
   bridgeDisabled?: boolean
+  // 插件来源白名单：开关打开才下发；打开且列表为空 = 禁一切非内置插件
+  marketsEnabled?: boolean
+  markets?: string
   reason: string
 }
 
@@ -144,6 +151,9 @@ function toSettings(values: FormValues): PolicySettings {
   if (values.strictAll) settings.strictPluginOnlyCustomization = true
   else if (values.strictSurfaces?.length) settings.strictPluginOnlyCustomization = values.strictSurfaces
   if (values.bridgeDisabled) settings.bridgeEnabled = false
+  if (values.marketsEnabled) {
+    settings.strictKnownMarketplaces = splitLines(values.markets).map(url => ({ source: 'url', url }))
+  }
   return settings
 }
 
@@ -173,6 +183,8 @@ function fromItem(row: PolicyItem): FormValues {
     strictAll: strict === true,
     strictSurfaces: Array.isArray(strict) ? strict : [],
     bridgeDisabled: row.settings.bridgeEnabled === false,
+    marketsEnabled: Array.isArray(row.settings.strictKnownMarketplaces),
+    markets: (row.settings.strictKnownMarketplaces ?? []).map(m => m.url).join('\n'),
     reason: '',
   }
 }
@@ -593,6 +605,27 @@ export default function PolicyList() {
             extra="关闭后该范围的客户端不再接受遥控。省略等于不关。"
           >
             <Switch />
+          </Form.Item>
+          <Form.Item
+            name="marketsEnabled"
+            label="限制插件来源（strictKnownMarketplaces）"
+            valuePropName="checked"
+            extra="打开后只允许从下列市场 index URL 安装 / 加载插件，本地目录与 --plugin-dir 一律拒绝；列表留空 = 除内置外禁一切插件。需 sid-code 支持该字段的版本。"
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.marketsEnabled !== cur.marketsEnabled}>
+            {({ getFieldValue }) =>
+              getFieldValue('marketsEnabled') ? (
+                <Form.Item
+                  name="markets"
+                  label="市场 index URL"
+                  extra="一行一个，最多 32 个。必须 https；仅本机回环（127.0.0.1 / localhost / [::1]）可用 http。不能带账号密码、query 或 #。"
+                >
+                  <Input.TextArea rows={3} placeholder={'https://market.corp.example/index.json'} />
+                </Form.Item>
+              ) : null
+            }
           </Form.Item>
           <Form.Item name="strictAll" label="锁定全部定制化面" valuePropName="checked">
             <Switch />

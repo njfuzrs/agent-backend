@@ -19,6 +19,7 @@ from app.core.db import get_db
 from app.modules.event.schemas import (
     EventListResponse,
     EventRejectListResponse,
+    PluginUsageResponse,
     PolicyAuditResponse,
     SessionCoverageResponse,
 )
@@ -81,3 +82,16 @@ async def policy_audit(
 ):
     """按 device 聚合：策略是否真的在拦东西。默认窗口 7 天（Text 列 json.loads 的代价）。"""
     return await query_service.policy_audit(db, since=since, org_id=org_id)
+
+
+@router.get("/stats/by-plugin", response_model=PluginUsageResponse)
+async def plugin_usage(
+    days: int = Query(30, ge=1, le=query_service.PLUGIN_USAGE_MAX_DAYS),
+    org_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """按插件 × 人统计 tool_invoked（企业市场插件的工具调用）。窗口上限 90 天。
+
+    行数超过扫描上限时 truncated=true，数字是下限。未登录设备合成 user_ref=null 一行。
+    """
+    return await query_service.plugin_usage(db, days=days, org_id=org_id)

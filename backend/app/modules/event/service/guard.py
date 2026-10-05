@@ -11,6 +11,7 @@ fail-open（坏的那条计 rejected，好的照常入库）。两者不是矛�
 
 import hashlib
 import json
+import re
 from typing import Any
 
 # --- 上限（契约 §7）。改这里要同步改 01-契约.md ---------------------------------
@@ -57,6 +58,13 @@ ALLOWED_EVENT_NAMES = frozenset(
         # P5 插件市场（方案 §5.5）：客户端从企业市场装完插件后上报。服务端先放行，
         # 客户端接线前不会有这条；接线后不必再等一次服务端发版。
         "plugin_installed",
+        # P5 新增（sid-code 客户端）：只对「来自企业市场安装的插件」的工具调用上报，
+        # 用于按插件统计调用次数。为什么不复用 tool_call：它的 tool_name 对 MCP 脱敏成
+        # mcp_tool，server / tool 原名只在 _PROTECTED_* 字段里，被 HTTP 导出默认剥掉；
+        # 决定是**不**给本后端开 stripProtected:false（那会把所有 MCP 原名一起放出来），
+        # 而是另发一个只带插件名 / 组件 / 工具名、不带参数的事件。字段校验见
+        # validate_tool_invoked。
+        "tool_invoked",
     }
 )
 
@@ -69,6 +77,14 @@ REASON_BAD_SHAPE = "bad_shape"
 REASON_METADATA_NOT_DICT = "metadata_not_dict"
 REASON_TOO_MANY_KEYS = "metadata_too_many_keys"
 REASON_NESTED_VALUE = "metadata_nested_value"
+REASON_BAD_PLUGIN_FIELDS = "bad_plugin_fields"
+
+# tool_invoked 的必填字段约束。plugin_name 是市场里登记的 slug，按它聚合，
+# 所以格式必须收紧：放进一个带空格 / 大写的名字，就会在聚合表里多长出一行。
+# 用 fullmatch：re.match + "$" 会放行结尾一个换行符
+PLUGIN_NAME_RE = re.compile(r"[a-z0-9][a-z0-9\-_]*")
+PLUGIN_NAME_MAX = 64
+PLUGIN_COMPONENTS = frozenset({"mcp", "skill"})
 
 
 class RejectedEvent(Exception):
@@ -158,6 +174,25 @@ def validate_metadata(metadata: Any, event_name: str) -> dict[str, Any]:
     if truncated:
         cleaned[TRUNCATED_FLAG] = True
     return cleaned
+
+
+def validate_tool_invoked(metadata: dict[str, Any]) -> None:
+    """tool_invoked 的业务字段校验。不合格抛 RejectedEvent（逐条计 rejected，不退整批）。
+
+    只校验聚合要用的两个键：`plugin_name`（聚合维度）与 `plugin_component`（闭集）。
+    `plugin_marketplace` / `plugin_tool` / `tool_name` 是展示字段，形状已由通用
+    metadata 校验约束（扁平、字符串截断），这里不再收紧 —— 收紧展示字段只会让
+    客户端小改一次文案就整批被拒。
+    """
+    name = metadata.get("plugin_name")
+    if (
+        not isinstance(name, str)
+        or len(name) > PLUGIN_NAME_MAX
+        or not PLUGIN_NAME_RE.fullmatch(name)
+    ):
+        raise RejectedEvent(REASON_BAD_PLUGIN_FIELDS, "tool_invoked")
+    if metadata.get("plugin_component") not in PLUGIN_COMPONENTS:
+        raise RejectedEvent(REASON_BAD_PLUGIN_FIELDS, "tool_invoked")
 
 
 def validate_event_name(name: Any) -> str:
