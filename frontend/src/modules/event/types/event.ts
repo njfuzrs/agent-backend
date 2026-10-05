@@ -83,3 +83,34 @@ export type EventListParams = {
   since?: string
   limit?: number
 }
+
+/** 按插件统计（P5）。只统计 tool_invoked：企业市场插件的工具调用。 */
+export type PluginUserUsage = {
+  /** null = 未登录设备合计 */
+  user_ref: number | null
+  name: string
+  union_id: string
+  calls: number
+  last_received_at: string | null
+}
+
+export type PluginUsageItem = {
+  plugin_name: string
+  marketplaces: string[]
+  calls: number
+  mcp_calls: number
+  skill_calls: number
+  /** 去重人数，只数登录过的人 */
+  users: number
+  has_anonymous: boolean
+  by_user: PluginUserUsage[]
+}
+
+export type PluginUsageResponse = {
+  since: string
+  days: number
+  scanned: number
+  /** true = 超过扫描上限，数字是下限 */
+  truncated: boolean
+  items: PluginUsageItem[]
+}

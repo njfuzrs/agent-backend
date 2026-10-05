@@ -139,3 +139,41 @@ class EventRejectListResponse(BaseModel):
 
     total: int = 0
     items: list[EventRejectItem]
+
+
+class PluginUserUsage(BaseModel):
+    """插件 × 人的一行。user_ref 为 NULL 是「未登录设备」合计，不能丢：丢了总数对不上。"""
+
+    user_ref: Optional[int] = None
+    name: str = ""
+    union_id: str = ""
+    calls: int = 0
+    last_received_at: Optional[str] = None
+
+
+class PluginUsageItem(BaseModel):
+    """一个插件的汇总。`users` 是去重人数（未登录设备合计算作一人份，单独标出）。"""
+
+    plugin_name: str
+    # 市场名可能不止一个（同名插件上过两个市场），全部列出，不挑一个
+    marketplaces: list[str] = Field(default_factory=list)
+    calls: int = 0
+    mcp_calls: int = 0
+    skill_calls: int = 0
+    users: int = 0
+    has_anonymous: bool = False
+    by_user: list[PluginUserUsage] = Field(default_factory=list)
+
+
+class PluginUsageResponse(BaseModel):
+    """按插件统计 tool_invoked。
+
+    `truncated=True` 表示窗口内行数超过扫描上限，只聚合了最新的 `scanned` 行 ——
+    数字是**下限**，不是总数。metadata 存 Text，聚合在 Python 侧做，必须有上限。
+    """
+
+    since: str
+    days: int
+    scanned: int = 0
+    truncated: bool = False
+    items: list[PluginUsageItem]

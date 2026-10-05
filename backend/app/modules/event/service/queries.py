@@ -18,7 +18,7 @@ import json
 from datetime import timedelta
 from typing import Any, Optional
 
-from sqlalchemy import case, func, select, text
+from sqlalchemy import bindparam, case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timeutil import utc_now
@@ -29,6 +29,9 @@ from app.modules.event.schemas import (
     EventListResponse,
     EventRejectItem,
     EventRejectListResponse,
+    PluginUsageItem,
+    PluginUsageResponse,
+    PluginUserUsage,
     PolicyAuditItem,
     PolicyAuditResponse,
     SessionCoverageItem,
@@ -360,3 +363,93 @@ async def policy_audit(
 
     items = sorted(buckets.values(), key=lambda x: x.last_received_at or "", reverse=True)
     return PolicyAuditResponse(since=since_iso, items=items)
+
+
+# --- 按插件统计（P5） ---------------------------------------------------------
+# 窗口与扫描上限。metadata 是 Text，插件名不在列上（本仓约定：metadata 内部字段
+# 不建索引），只能先按 (event_name, received_at) 索引取行、再在 Python 里 loads。
+# 两个上限让这个代价有界；超了在响应里标 truncated，不静默少算。
+PLUGIN_USAGE_MAX_DAYS = 90
+PLUGIN_USAGE_MAX_ROWS = 50_000
+
+# 有意跨模块读表：只读 users 的展示列，不 import User（与 cost.by_user 同一做法）。
+_USER_NAMES_SQL = text("SELECT id, name, union_id FROM users WHERE id IN :ids").bindparams(
+    bindparam("ids", expanding=True)
+)
+
+
+async def plugin_usage(
+    db: AsyncSession,
+    *,
+    days: int = 30,
+    org_id: Optional[str] = None,
+) -> PluginUsageResponse:
+    """按 plugin_name × user_ref 聚合 tool_invoked 调用次数。
+
+    归属看事件行上的 user_ref（入库时从凭据写），不看 metadata 里任何自报字段。
+    入库已校验过 plugin_name / plugin_component，这里仍防御脏行（脚本直接写库、
+    校验放宽前的旧行）：不合格的跳过，不让一条脏行把聚合打成 500。
+    """
+    since_iso = (utc_now() - timedelta(days=days)).isoformat()
+    # 只取聚合要的四列；event_name 等值 + received_at 范围命中 idx_events_name_received
+    stmt = (
+        select(Event.user_ref, Event.received_at, Event.metadata_json)
+        .where(Event.event_name == "tool_invoked", Event.received_at >= since_iso)
+        .order_by(Event.received_at.desc(), Event.id.desc())
+        .limit(PLUGIN_USAGE_MAX_ROWS + 1)
+    )
+    if org_id:
+        stmt = stmt.where(Event.org_id == org_id)
+    rows = (await db.execute(stmt)).all()
+    truncated = len(rows) > PLUGIN_USAGE_MAX_ROWS
+    rows = rows[:PLUGIN_USAGE_MAX_ROWS]
+
+    plugins: dict[str, PluginUsageItem] = {}
+    per_user: dict[str, dict[Optional[int], PluginUserUsage]] = {}
+    for user_ref, received_at, raw in rows:
+        meta = _loads(raw)
+        name = meta.get("plugin_name")
+        component = meta.get("plugin_component")
+        if not isinstance(name, str) or not name or component not in ("mcp", "skill"):
+            continue
+        item = plugins.get(name)
+        if item is None:
+            item = plugins[name] = PluginUsageItem(plugin_name=name)
+            per_user[name] = {}
+        item.calls += 1
+        if component == "mcp":
+            item.mcp_calls += 1
+        else:
+            item.skill_calls += 1
+        market = meta.get("plugin_marketplace")
+        if isinstance(market, str) and market and market not in item.marketplaces:
+            item.marketplaces.append(market)
+        u = per_user[name].get(user_ref)
+        if u is None:
+            u = per_user[name][user_ref] = PluginUserUsage(user_ref=user_ref)
+        u.calls += 1
+        if received_at and (u.last_received_at is None or received_at > u.last_received_at):
+            u.last_received_at = received_at
+
+    ids = sorted({uid for users in per_user.values() for uid in users if uid is not None})
+    names: dict[int, tuple[str, str]] = {}
+    if ids:
+        for uid, uname, union_id in (await db.execute(_USER_NAMES_SQL, {"ids": ids})).all():
+            names[uid] = (uname or "", union_id or "")
+
+    for name, item in plugins.items():
+        users = list(per_user[name].values())
+        for u in users:
+            if u.user_ref is not None:
+                u.name, u.union_id = names.get(u.user_ref, ("", ""))
+        users.sort(key=lambda u: (-u.calls, u.user_ref is None, u.user_ref or 0))
+        item.by_user = users
+        # 去重人数只数登录过的人；未登录设备无法区分是几个人，单独用 has_anonymous 标出
+        item.users = sum(1 for u in users if u.user_ref is not None)
+        item.has_anonymous = any(u.user_ref is None for u in users)
+        item.marketplaces.sort()
+
+    items = sorted(plugins.values(), key=lambda x: (-x.calls, x.plugin_name))
+    return PluginUsageResponse(
+        since=since_iso, days=days, scanned=len(rows), truncated=truncated, items=items
+    )
