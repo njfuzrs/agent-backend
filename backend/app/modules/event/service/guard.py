@@ -55,6 +55,9 @@ ALLOWED_EVENT_NAMES = frozenset(
         "policy_enforced",
         "guardrail_triggered",
         "context_assembled",
+        # P5 插件市场（方案 §5.5）：客户端从企业市场装完插件后上报。服务端先放行，
+        # 客户端接线前不会有这条；接线后不必再等一次服务端发版。
+        "plugin_installed",
         # P5 新增（sid-code 客户端）：只对「来自企业市场安装的插件」的工具调用上报，
         # 用于按插件统计调用次数。为什么不复用 tool_call：它的 tool_name 对 MCP 脱敏成
         # mcp_tool，server / tool 原名只在 _PROTECTED_* 字段里，被 HTTP 导出默认剥掉；

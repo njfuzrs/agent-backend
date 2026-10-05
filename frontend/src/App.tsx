@@ -9,6 +9,7 @@ import {
   LogoutOutlined,
   SafetyCertificateOutlined,
   AuditOutlined,
+  AppstoreOutlined,
   SettingOutlined,
   TeamOutlined,
   UnorderedListOutlined,
@@ -25,6 +26,7 @@ import AuditOverview from './modules/event/pages/AuditOverview'
 import CostOverview from './modules/cost/pages/CostOverview'
 import BridgeSessions from './modules/bridge/pages/BridgeSessions'
 import UserList from './modules/auth/pages/UserList'
+import MarketList from './modules/marketplace/pages/MarketList'
 import LoginPage from './pages/Login'
 import { fetchMe, logout, type MeResponse } from './modules/trajectory/services/api'
 
@@ -72,6 +74,8 @@ function ProtectedLayout() {
                 ? '/bridge'
                 : location.pathname.startsWith('/users')
                 ? '/users'
+                : location.pathname.startsWith('/marketplace')
+                ? '/marketplace'
                 : location.pathname.startsWith('/settings')
                 ? '/settings'
                 : '/'
@@ -118,6 +122,7 @@ function ProtectedLayout() {
             { key: '/audit', icon: <AuditOutlined />, label: '审计' },
             { key: '/cost', icon: <DollarOutlined />, label: '成本' },
             { key: '/bridge', icon: <ApiOutlined />, label: '遥控' },
+            { key: '/marketplace', icon: <AppstoreOutlined />, label: '市场' },
             { key: '/users', icon: <TeamOutlined />, label: '用户' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
@@ -154,6 +159,7 @@ function App() {
         <Route path="/cost" element={<CostOverview />} />
         <Route path="/bridge" element={<BridgeSessions />} />
         <Route path="/users" element={<UserList />} />
+        <Route path="/marketplace" element={<MarketList />} />
         <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         <Route path="/compare" element={<Navigate to="/" replace />} />
         <Route path="/compare/:groupId" element={<Navigate to="/" replace />} />
