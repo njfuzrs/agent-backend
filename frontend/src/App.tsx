@@ -6,6 +6,7 @@ import {
   DesktopOutlined,
   DollarOutlined,
   FlagOutlined,
+  KeyOutlined,
   LogoutOutlined,
   SafetyCertificateOutlined,
   AuditOutlined,
@@ -27,6 +28,7 @@ import CostOverview from './modules/cost/pages/CostOverview'
 import BridgeSessions from './modules/bridge/pages/BridgeSessions'
 import UserList from './modules/auth/pages/UserList'
 import MarketList from './modules/marketplace/pages/MarketList'
+import FeishuDelegation from './modules/feishu/pages/FeishuDelegation'
 import LoginPage from './pages/Login'
 import { fetchMe, logout, type MeResponse } from './modules/trajectory/services/api'
 
@@ -76,6 +78,8 @@ function ProtectedLayout() {
                 ? '/users'
                 : location.pathname.startsWith('/marketplace')
                 ? '/marketplace'
+                : location.pathname.startsWith('/feishu')
+                ? '/feishu'
                 : location.pathname.startsWith('/settings')
                 ? '/settings'
                 : '/'
@@ -124,6 +128,7 @@ function ProtectedLayout() {
             { key: '/bridge', icon: <ApiOutlined />, label: '遥控' },
             { key: '/marketplace', icon: <AppstoreOutlined />, label: '市场' },
             { key: '/users', icon: <TeamOutlined />, label: '用户' },
+            { key: '/feishu', icon: <KeyOutlined />, label: '飞书授权' },
             { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
@@ -160,6 +165,7 @@ function App() {
         <Route path="/bridge" element={<BridgeSessions />} />
         <Route path="/users" element={<UserList />} />
         <Route path="/marketplace" element={<MarketList />} />
+        <Route path="/feishu" element={<FeishuDelegation />} />
         <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         <Route path="/compare" element={<Navigate to="/" replace />} />
         <Route path="/compare/:groupId" element={<Navigate to="/" replace />} />
