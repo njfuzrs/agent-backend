@@ -108,6 +108,7 @@ agent-backend/
 │   │   ├── modules/policy/       # 策略列表（device/team/org）
 │   │   ├── modules/event/        # 审计视图（/audit，与轨迹 join）
 │   │   ├── modules/auth/         # 用户列表（角色 / 吊销）+ 登录审计（/users）
+│   │   ├── modules/feishu/       # 飞书委托授权（/feishu）：授权状态（scope / 过期 / 快满 365 天）+ 调用审计（按人 / 设备 / 结果 / 时间筛）
 │   │   ├── modules/marketplace/  # 插件市场（/marketplace）：登记 / 上传 / 发布 / 下架、组件清单、下载统计、变更审计
 │   │   └── utils/          # 跨模块工具（format / chart / trajectoryDetail）
 │   └── vite.config.ts      # base: '/traj/'（冻结区，不要改）
