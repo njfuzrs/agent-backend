@@ -14,6 +14,7 @@ policy 用这些**字段**。
 """
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
@@ -29,6 +30,7 @@ ALLOWED_TOP_LEVEL = frozenset(
         "disableBypassPermissionsMode",
         "strictPluginOnlyCustomization",
         "bridgeEnabled",
+        "strictKnownMarketplaces",
     }
 )
 
@@ -66,6 +68,14 @@ VALID_PERMISSION_MODES = frozenset(
 
 VALID_SURFACES = frozenset({"commands", "skills", "agents", "hooks", "mcp-servers"})
 VALID_BYPASS = frozenset({"disable", "allow"})
+
+# strictKnownMarketplaces 的上限与 http 例外。
+# 32 项：企业里市场是个位数，32 是「配错了」的信号而不是正常规模。
+MAX_KNOWN_MARKETPLACES = 32
+MAX_MARKETPLACE_URL_CHARS = 2048
+# 只有本机回环可以用 http（本地起一个 index 做验收）。别的主机走 http
+# = index 可被中间人替换，白名单就形同虚设。
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def validate_settings(settings: Any) -> dict[str, Any]:
@@ -119,6 +129,10 @@ def validate_settings(settings: Any) -> dict[str, Any]:
         out["strictPluginOnlyCustomization"] = _validate_strict(
             settings["strictPluginOnlyCustomization"]
         )
+    if "strictKnownMarketplaces" in settings:
+        out["strictKnownMarketplaces"] = _validate_known_marketplaces(
+            settings["strictKnownMarketplaces"]
+        )
     if "bridgeEnabled" in settings:
         # 只有 false 是约束。true 与省略同义（不关），写入时丢掉，避免空欢喜。
         if not isinstance(settings["bridgeEnabled"], bool):
@@ -129,7 +143,7 @@ def validate_settings(settings: Any) -> dict[str, Any]:
     if not _has_constraint(out):
         raise HTTPException(
             status_code=422,
-            detail="空策略会作为 remote 盖掉本地 managed。至少配一项约束（deny / 关掉的 feature / 收紧方向的布尔 / disabledModes / bypass=disable / strictPluginOnly）。",
+            detail="空策略会作为 remote 盖掉本地 managed。至少配一项约束（deny / 关掉的 feature / 收紧方向的布尔 / disabledModes / bypass=disable / strictPluginOnly / strictKnownMarketplaces）。",
         )
     return out
 
@@ -225,6 +239,75 @@ def _validate_strict(value: Any) -> bool | list[str]:
     )
 
 
+def _normalize_marketplace_url(raw: Any) -> str:
+    """校验一个市场 index URL 并去掉尾斜杠。不合法 422。
+
+    客户端按「去尾斜杠后的字符串」做相等比较，所以服务端存归一化后的值，
+    两端才不会因为一个 `/` 对不上。不做大小写 / 端口等其它归一化：
+    多做一步就多一处与客户端不一致的可能。
+    """
+    if not isinstance(raw, str) or not raw:
+        raise HTTPException(status_code=422, detail="strictKnownMarketplaces[].url 必须是非空字符串")
+    if len(raw) > MAX_MARKETPLACE_URL_CHARS:
+        raise HTTPException(status_code=422, detail="strictKnownMarketplaces[].url 过长")
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
+        raise HTTPException(status_code=422, detail=f"市场 URL 含空白或控制字符：{raw!r}")
+    # 用原串判 query / fragment：urlsplit 对空 query（结尾一个 ?）给出 ""，会漏掉
+    if "?" in raw or "#" in raw:
+        raise HTTPException(status_code=422, detail=f"市场 URL 不允许 query / fragment：{raw}")
+    if raw.startswith("https://"):
+        scheme = "https"
+    elif raw.startswith("http://"):
+        scheme = "http"
+    else:
+        # 只认小写 scheme：客户端是字符串比较，HTTPS:// 会被当成另一个市场
+        raise HTTPException(status_code=422, detail=f"市场 URL 必须是 https（本机回环可用 http）：{raw}")
+    try:
+        parts = urlsplit(raw)
+        _ = parts.port  # 非法端口在这里抛 ValueError
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"市场 URL 无法解析：{raw}") from exc
+    if "@" in parts.netloc:
+        raise HTTPException(status_code=422, detail=f"市场 URL 不允许带 userinfo：{raw}")
+    host = parts.hostname or ""
+    if not host:
+        raise HTTPException(status_code=422, detail=f"市场 URL 缺少主机名：{raw}")
+    if scheme == "http" and host not in LOOPBACK_HOSTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"http 只允许 127.0.0.1 / localhost / [::1]，其余必须 https：{raw}",
+        )
+    return raw.rstrip("/")
+
+
+def _validate_known_marketplaces(value: Any) -> list[dict[str, str]]:
+    """校验并归一化 strictKnownMarketplaces。保留顺序去重；空数组原样保留（= 禁一切插件）。"""
+    if not isinstance(value, list):
+        raise HTTPException(status_code=422, detail="strictKnownMarketplaces 必须是数组")
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=422, detail="strictKnownMarketplaces[] 必须是 {source, url}")
+        extra = [k for k in item if k not in {"source", "url"}]
+        if extra:
+            raise HTTPException(status_code=422, detail=f"strictKnownMarketplaces[] 含未知字段 {extra}")
+        if item.get("source") != "url":
+            raise HTTPException(status_code=422, detail="strictKnownMarketplaces[].source 只允许 'url'")
+        url = _normalize_marketplace_url(item.get("url"))
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append({"source": "url", "url": url})
+    # 上限按去重后计：重复项不该让一份合理配置被拒
+    if len(out) > MAX_KNOWN_MARKETPLACES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"strictKnownMarketplaces 最多 {MAX_KNOWN_MARKETPLACES} 项（去重后 {len(out)} 项）",
+        )
+    return out
+
+
 def _has_constraint(settings: dict[str, Any]) -> bool:
     """至少一项约束，避免「空 remote」盖掉本地护栏。"""
     perms = settings.get("permissions") or {}
@@ -249,5 +332,8 @@ def _has_constraint(settings: dict[str, Any]) -> bool:
         return True
     # false 是「禁止遥控」这一项约束。只关 Bridge 的策略因此不是空策略。
     if settings.get("bridgeEnabled") is False:
+        return True
+    # 数组（含空数组）都是约束：空数组 = 除内置外禁一切插件，是最严的一档。
+    if isinstance(settings.get("strictKnownMarketplaces"), list):
         return True
     return False

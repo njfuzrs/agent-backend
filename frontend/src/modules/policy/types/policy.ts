@@ -13,6 +13,12 @@ export type PolicyLimitValue = {
   reason?: string
 }
 
+/** 插件来源白名单的一项。形状由 sid-code 客户端定。 */
+export type KnownMarketplace = {
+  source: 'url'
+  url: string
+}
+
 export type PolicySettings = {
   permissions?: PolicyPermissions
   policyLimits?: Record<string, PolicyLimitValue>
@@ -23,6 +29,8 @@ export type PolicySettings = {
   disableBypassPermissionsMode?: 'disable' | 'allow'
   strictPluginOnlyCustomization?: boolean | string[]
   bridgeEnabled?: boolean
+  /** 省略 = 不限制；数组 = 只允许这些市场 index URL；空数组 = 除内置外禁一切插件 */
+  strictKnownMarketplaces?: KnownMarketplace[]
 }
 
 export type PolicyItem = {

@@ -638,3 +638,147 @@ def test_bridge_enabled_must_be_bool(client):
         settings={"bridgeEnabled": "false"},
     )
     assert resp.status_code == 422, resp.text
+
+
+# ---------------------------------------------------------------------------
+# strictKnownMarketplaces（P5）：市场 index URL 白名单，客户端执行
+# ---------------------------------------------------------------------------
+def _org_policy(client, settings: dict):
+    _issue_code(client)
+    return _create_policy(
+        client,
+        scope_type="org",
+        scope_id="corp-shanghai",
+        org_id="corp-shanghai",
+        settings=settings,
+    )
+
+
+def _mk(*urls: str) -> dict:
+    return {"strictKnownMarketplaces": [{"source": "url", "url": u} for u in urls]}
+
+
+def test_known_marketplaces_delivered_verbatim_and_normalized(client):
+    """合法 URL 去尾斜杠、去重后入库，并原样出现在 /ctl/policy 响应里。"""
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-market")
+    created = _create_policy(
+        client,
+        scope_type="org",
+        scope_id="corp-shanghai",
+        org_id="corp-shanghai",
+        settings=_mk(
+            "https://market.corp.example/index.json",
+            "https://market.corp.example/v2/",
+            "https://market.corp.example/v2",  # 去尾斜杠后与上一项重复
+            "http://127.0.0.1:8765/index.json",
+            "http://localhost:9000",
+            "http://[::1]:9001/",
+        ),
+    )
+    assert created.status_code == 201, created.text
+    expected = [
+        {"source": "url", "url": "https://market.corp.example/index.json"},
+        {"source": "url", "url": "https://market.corp.example/v2"},
+        {"source": "url", "url": "http://127.0.0.1:8765/index.json"},
+        {"source": "url", "url": "http://localhost:9000"},
+        {"source": "url", "url": "http://[::1]:9001"},
+    ]
+    assert created.json()["settings"]["strictKnownMarketplaces"] == expected
+
+    resp = _get_policy(client, cred)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"source": "remote", "strictKnownMarketplaces": expected}
+
+
+def test_known_marketplaces_empty_array_is_a_constraint(client):
+    """空数组 = 除内置外禁一切插件。它是最严的一档，不能被当成空策略拒掉，也不能被丢掉。"""
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-market-empty")
+    created = _create_policy(
+        client,
+        scope_type="org",
+        scope_id="corp-shanghai",
+        org_id="corp-shanghai",
+        settings={"strictKnownMarketplaces": []},
+    )
+    assert created.status_code == 201, created.text
+    resp = _get_policy(client, cred)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"source": "remote", "strictKnownMarketplaces": []}
+
+
+def test_known_marketplaces_omitted_means_not_delivered(client):
+    """省略 = 不限制：下发里不出现这个键（出现空数组就是禁一切，语义完全相反）。"""
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-market-omit")
+    assert _create_policy(
+        client, scope_type="org", scope_id="corp-shanghai", org_id="corp-shanghai", settings=DENY_CURL
+    ).status_code == 201
+    resp = _get_policy(client, cred)
+    assert "strictKnownMarketplaces" not in resp.json()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://market.corp.example/index.json",  # 非回环 http
+        "http://10.0.0.1/index.json",
+        "ftp://market.corp.example/",
+        "HTTPS://market.corp.example/",  # 大写 scheme：客户端字符串比较会当另一个市场
+        "https://user:pw@market.corp.example/",  # userinfo
+        "https://token@market.corp.example/",
+        "https://market.corp.example/index.json?ref=main",  # query
+        "https://market.corp.example/index.json?",  # 空 query
+        "https://market.corp.example/index.json#top",  # fragment
+        "https:///index.json",  # 无主机
+        "https://market.corp.example/a b",  # 空白
+        "https://market.corp.example:99999/",  # 非法端口
+        "market.corp.example/index.json",  # 无 scheme
+        "",
+    ],
+)
+def test_known_marketplaces_bad_url_is_422(client, url):
+    resp = _org_policy(client, _mk(url))
+    assert resp.status_code == 422, (url, resp.text)
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"source": "url", "url": "https://m.example", "name": "x"},  # extra 字段
+        {"source": "git", "url": "https://m.example"},  # source 闭集
+        {"url": "https://m.example"},  # 缺 source
+        {"source": "url"},  # 缺 url
+        {"source": "url", "url": 123},
+        "https://m.example",  # 不是对象
+    ],
+)
+def test_known_marketplaces_bad_item_shape_is_422(client, item):
+    resp = _org_policy(client, {"strictKnownMarketplaces": [item]})
+    assert resp.status_code == 422, (item, resp.text)
+
+
+def test_known_marketplaces_not_array_is_422(client):
+    resp = _org_policy(client, {"strictKnownMarketplaces": {"source": "url", "url": "https://m.example"}})
+    assert resp.status_code == 422, resp.text
+
+
+def test_known_marketplaces_limit_32_after_dedup(client):
+    ok = _org_policy(client, _mk(*[f"https://m{i}.example" for i in range(32)]))
+    assert ok.status_code == 201, ok.text
+    # 33 个不同的 → 422；但 32 个不同 + 重复项不该被拒（上限按去重后计）
+    dup = client.put(
+        f"/api/v1/policies/{ok.json()['id']}",
+        json={
+            "settings": _mk(*[f"https://m{i}.example" for i in range(32)], "https://m0.example/"),
+            "reason": "dup",
+        },
+    )
+    assert dup.status_code == 200, dup.text
+    assert len(dup.json()["settings"]["strictKnownMarketplaces"]) == 32
+    too_many = client.put(
+        f"/api/v1/policies/{ok.json()['id']}",
+        json={"settings": _mk(*[f"https://m{i}.example" for i in range(33)]), "reason": "33"},
+    )
+    assert too_many.status_code == 422, too_many.text
