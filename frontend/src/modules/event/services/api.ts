@@ -3,6 +3,7 @@ import type {
   EventListParams,
   EventListResponse,
   EventRejectListResponse,
+  PluginUsageResponse,
   PolicyAuditResponse,
   SessionCoverageResponse,
 } from '../types/event'
@@ -27,5 +28,10 @@ export async function fetchSessionCoverage(limit = 50): Promise<SessionCoverageR
 
 export async function fetchPolicyAudit(params: { since?: string; org_id?: string } = {}): Promise<PolicyAuditResponse> {
   const { data } = await api.get('/events/stats/policy-audit', { params })
+  return data
+}
+
+export async function fetchPluginUsage(params: { days?: number; org_id?: string } = {}): Promise<PluginUsageResponse> {
+  const { data } = await api.get('/events/stats/by-plugin', { params })
   return data
 }

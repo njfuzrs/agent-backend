@@ -141,6 +141,7 @@ agent-backend/
 - **CLI 飞书登录（P2）**：`GET /auth/feishu/cli/start` 建 kind=cli 的 state（记 CLI 端口 / PKCE challenge / cli_state / device_id），共用 `/auth/feishu/callback`，按 kind 分流：cli 签 60 秒一次性登录码（`login_codes`，只存 hash）并 302 回 `http://127.0.0.1:<port>/callback`（主机写死，只有端口可变）。`POST /auth/cli/exchange` 校验码 + S256(verifier) + device_id 后签设备凭据并写 `devices.user_ref`；设备已绑给另一个在职用户返回 409（不吊销对方），注册码也不能覆盖已绑人的设备。`POST /auth/cli/logout` 挂 `require_device`，吊销并解绑。吊销用户在同一事务里吊销其名下全部设备凭据。归因只认 `user_ref`，自报的 `devices.user_id` 不可信。P2 同样不存飞书 token
 - **委托授权（P4）**（`modules/feishu/`）：登录回调换到的 user_access_token / refresh_token 在配了 `TOKEN_ENC_KEY` 时用 MultiFernet 加密存进 `feishu_tokens`（没配就不存，`/ctl/feishu/mcp` 返回 503）。远程 MCP `POST /api/v1/ctl/feishu/mcp` 挂 `require_device`，按 `DeviceContext.user_ref` 取本人 token 调飞书，token 不出服务端；手写 JSON-RPC（initialize / ping / tools/list / tools/call），三个只读工具 `feishu_doc_read` / `feishu_doc_search` / `feishu_wiki_node`。刷新走进程锁 + PG `FOR UPDATE`，锁内二次检查 version，新 refresh_token 先 commit 再交出 access；refresh 失败删 token 行、提示重新 `sid-code login`，**绝不降级到 tenant_access_token**。每次调用写一行 `feishu_call_audit`（只记文档 token，不记内容和搜索词）。吊销用户同一事务删 token。门禁 ⑫：auth / feishu 的 logger 实参禁止引用 token 变量（AST），feishu 模块禁止出现 tenant / app access token
 - **身份落账（P3）**：`events.user_ref` / `usage_ledger.user_ref` 入库时从 `DeviceContext` 取（= 上报那一刻 `devices.user_ref` 的快照），body 里的同名字段一律忽略；未登录设备为 NULL。不建 FK、旧行不回填：设备换过人时历史仍记在当时的人头上。管理台按人看走 `GET /usage/ledger/stats/by-user`（默认 daily，NULL 合成「未登录」一行，合计与 by-scope 对齐）与列表的 `user_ref` 筛选。轨迹的 `user_id` 仍是自报（冻结的上传通道认不出人），是弱归因
+- **插件治理（P5）**：policy 新增 `strictKnownMarketplaces`（`[{source:"url", url}]`，https 或回环 http、无 userinfo/query/fragment、去尾斜杠、去重、≤32；省略=不限制，空数组=禁一切非内置插件，是约束不是空策略），客户端执行。按插件统计走新事件 `tool_invoked`（客户端只对企业市场插件上报，入库校验 `plugin_name` slug ≤64、`plugin_component ∈ {mcp, skill}`，坏的逐条 rejected）；`GET /events/stats/by-plugin?days=30&org_id=`（≤90 天、最多扫 5 万行并标 `truncated`）按 `plugin_name × user_ref` 聚合，metadata 在 Python 侧解析、不建索引。**不**给本后端开 `stripProtected:false`
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400
 - **文件格式兼容**：读取时自动尝试 `.gz` 和非 `.gz` 格式，兼容迁移前的旧数据
@@ -173,7 +174,7 @@ cd frontend && pnpm run build
 
 # 门禁自查（提交前跑一遍）
 cd backend && ruff check . && alembic check          # lint + schema 漂移
-python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_cost.py ../tests/test_auth_login.py ../tests/test_auth_cli.py ../tests/test_identity_ledger.py ../tests/test_deploy_scripts.py -v  # 边界 + 身份 + flag + policy + event + cost + 登录 + 身份落账 + 发版脚本
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_event_plugin_usage.py ../tests/test_cost.py ../tests/test_auth_login.py ../tests/test_auth_cli.py ../tests/test_identity_ledger.py ../tests/test_deploy_scripts.py -v  # 边界 + 身份 + flag + policy + event + cost + 登录 + 身份落账 + 发版脚本
 
 # 数据库迁移
 cd backend && alembic upgrade head                   # 本地：建库/升级

@@ -31,6 +31,7 @@ import type {
   SessionCoverageItem,
 } from '../types/event'
 import { formatDuration } from '../../../utils/format'
+import PluginUsageCard from '../components/PluginUsageCard'
 
 function formatTs(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === '') return '—'
@@ -470,6 +471,8 @@ export default function AuditOverview() {
           }))}
         />
       </Card>
+
+      <PluginUsageCard />
 
       <Card
         title="策略与护栏是不是在拦东西"

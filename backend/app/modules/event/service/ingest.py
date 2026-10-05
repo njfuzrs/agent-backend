@@ -36,6 +36,7 @@ from app.modules.event.service.guard import (
     validate_client_ts,
     validate_event_name,
     validate_metadata,
+    validate_tool_invoked,
 )
 
 logger = get_logger("agent.event")
@@ -150,6 +151,10 @@ async def ingest_events(
             event_name = validate_event_name(raw.get("eventName"))
             client_ts = validate_client_ts(raw.get("timestamp"), event_name)
             metadata = validate_metadata(raw.get("metadata"), event_name)
+            if event_name == "tool_invoked":
+                # 用截断前的原值校验更严，但截断只发生在 >1024 字符，plugin_name
+                # 上限 64，截断后的值同样过不了正则，结论一致。
+                validate_tool_invoked(metadata)
         except RejectedEvent as exc:
             rejected += 1
             key = (exc.event_name or "(unnamed)", exc.reason)

@@ -42,6 +42,20 @@ class PolicyLimitValue(BaseModel):
     reason: Optional[str] = None
 
 
+class KnownMarketplace(BaseModel):
+    """`strictKnownMarketplaces` 的一项。形状由 sid-code 客户端定（已先接线），不要改。
+
+    只有 `source: "url"` 一种：市场 index 的 URL。url 的合法性（https / loopback http、
+    无 userinfo / query / fragment、去尾斜杠）在 `service/guard.py` 校验并归一化，
+    这里只锁形状，免得两处各写一份规则。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["url"]
+    url: str
+
+
 class PolicySettingsIn(BaseModel):
     """写入用的 PolicySettings 子集。不含 source（下发时写死 remote）。"""
 
@@ -57,6 +71,13 @@ class PolicySettingsIn(BaseModel):
     strictPluginOnlyCustomization: Optional[bool | list[CustomizationSurface]] = None
     # 省略 = 未配置 = 不关遥控。false 才是约束。不做成 flag：flag 端点无认证。
     bridgeEnabled: Optional[StrictBool] = None
+    # 插件来源白名单（P5，客户端执行）：
+    #   省略      = 不限制插件来源；
+    #   数组      = 只允许从列出的市场 index URL 安装 / 加载插件；
+    #   空数组 [] = 除内置外禁一切插件（这是一项约束，不是「未配置」）。
+    # 本地目录安装与 `--plugin-dir` 在配置了本字段时一律拒绝。
+    # 遵守「客户端先接线，服务端才开放」：需 sid-code 支持该字段的版本才生效。
+    strictKnownMarketplaces: Optional[list[KnownMarketplace]] = None
 
 
 class PolicyCreate(BaseModel):
