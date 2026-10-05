@@ -684,12 +684,24 @@ def test_ci_installs_from_lock():
 def test_lock_matches_requirements(tmp_path: Path):
     """锁必须是 requirements.txt 的解析结果。改了范围不重生成，这条红。
 
-    用 uv 重新解析再比对。uv 不在时跳过而不是失败：这条锁的是「两份文件一致」，
-    没装 uv 的环境验证不了，但 CI 上有 uv。
+    以**现有锁为偏好**重解析（先把锁拷到 -o 的位置，uv 会优先保留里面的版本）。
+    曾经从零解析，结果断言的是「锁 == 镜像今天的最新版」：2026-10-05 镜像上了
+    pycryptodome 3.24.0，requirements.txt 一个字没改，这条就红了。这样的检查
+    任何一次上游发版都会让它误报，最后只会被人习惯性忽略。
+    以锁为偏好时，它只在两种情况下变红，都是真问题：
+    - requirements.txt 的范围改了，锁里的版本不再满足；
+    - 锁里钉的版本在镜像上没有了（被删 / 被 yank），生产 pip 同样会装不上。
+    升级依赖仍按 requirements.txt 顶部的命令从零重生成，这条测试不管「新不新」。
+
+    uv 不在时本地跳过；**CI 上不许跳过**：CI 原先没装 uv，这条在 CI 一直是
+    SKIPPED，等于没有。现在 ci.yml 装了钉死版本的 uv，CI=true 时缺 uv 直接失败。
     """
     if not shutil.which("uv"):
+        if os.environ.get("CI") == "true":
+            pytest.fail("CI 上必须有 uv（ci.yml 的 test-backend 装 uv），否则锁一致性检查形同虚设")
         pytest.skip("未安装 uv，无法重解析 requirements.txt")
     expected = tmp_path / "requirements.lock"
+    shutil.copyfile(BACKEND / "requirements.lock", expected)
     # 在 backend/ 下解析，和生成锁时的工作目录一致。uv 的 via 注释写的是
     # 传给它的路径，目录不同注释就不同，比对会变成假红。
     # 索引必须是阿里云镜像，与生产一致。对着公网 PyPI 解析的锁在生产装不上：
@@ -709,6 +721,13 @@ def test_lock_matches_requirements(tmp_path: Path):
     # 头两行是 uv 的命令回显，含输出路径，两边必然不同。比对从依赖本身开始。
     assert expected.read_text(encoding="utf-8").splitlines()[2:] == \
         (BACKEND / "requirements.lock").read_text(encoding="utf-8").splitlines()[2:]
+
+
+def test_ci_installs_uv_for_lock_check():
+    """CI 必须装 uv 且钉死版本：不装，上面那条在 CI 永远 SKIPPED；不钉，uv 改了输出
+    格式（via 注释、排序）锁比对就会假红。"""
+    text = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert re.search(r"pip install[^\n]*\buv==\d+\.\d+\.\d+", text)
 
 
 def test_ci_workflow_name_is_ci():
