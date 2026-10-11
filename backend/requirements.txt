@@ -11,7 +11,7 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 sqlalchemy>=2.0.0
-aiosqlite>=0.20.0
+aiosqlite>=0.22.1
 python-multipart>=0.0.9
 pydantic>=2.13.5
 pydantic-settings>=2.0.0
