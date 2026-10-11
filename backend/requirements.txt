@@ -25,10 +25,10 @@ alembic>=1.20.0
 # 而内网是否有 1.4.2 未核实。上限钉在生产已装过的 1.4.1，确认内网镜像同步后再放开。
 mako<1.4.2
 # 飞书 token 静态加密（Fernet / MultiFernet，P4）。原先只是 oss2 的传递依赖，显式声明。
-# 上限跟着 pyopenssl==25.3.0 的约束走，由锁定死实际版本。
+# 上限跟着 pyopenssl==26.4.0 的约束走，由锁定死实际版本。
 cryptography>=46.0.0
 # oss2 的传递依赖 aliyunsdkcore 在 import 时 import pyOpenSSL，但谁都不声明它。
 # 生产的 pyOpenSSL 来自 apt（python3-openssl 21.0.0），配不上 cryptography 50，
 # worker 在 import oss2 时崩溃、服务起不来（2026-09-25 发版实测）。
 # 钉死版本，否则 pip 每次发版都会按"锁里没有"把它卸掉。
-pyopenssl==25.3.0
+pyopenssl==26.4.0
