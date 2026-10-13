@@ -80,3 +80,31 @@ export type MarketDownloadStatsItem = {
   downloads: number
   last_at: string
 }
+
+/** CI 上传凭据（只能上传草稿）。明文 token 只在签发响应里出现一次 */
+export type UploadTokenItem = {
+  id: number
+  name: string
+  org_id: string
+  status: 'active' | 'revoked' | 'expired'
+  created_at: string
+  created_by: string
+  expires_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+  revoked_by: string | null
+}
+
+export type UploadTokenIssued = UploadTokenItem & { token: string }
+
+export type UploadTokenAuditItem = {
+  id: number
+  token_id: number | null
+  token_name: string
+  action: 'issue' | 'revoke' | 'upload' | 'denied'
+  reason: string
+  actor: string
+  detail: Record<string, unknown>
+  created_at: string
+  request_id: string | null
+}

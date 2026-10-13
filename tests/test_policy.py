@@ -782,3 +782,60 @@ def test_known_marketplaces_limit_32_after_dedup(client):
         json={"settings": _mk(*[f"https://m{i}.example" for i in range(33)]), "reason": "33"},
     )
     assert too_many.status_code == 422, too_many.text
+
+
+# ---------------------------------------------------------------------------
+# P2′：白名单里没有本企业市场 → 告警（不拒绝写入，方案 §6.3）
+# ---------------------------------------------------------------------------
+OWN_INDEX = "https://corp.example/traj/api/v1/ctl/marketplace/index"
+OFFICIAL_INDEX = "https://www.sid-code.cc/plugins/index.json"
+
+
+@pytest.fixture
+def public_base(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings.login, "PUBLIC_BASE_URL", "https://corp.example/traj/")
+
+
+def test_whitelist_without_own_market_warns(client, public_base):
+    resp = _org_policy(client, _mk(OFFICIAL_INDEX))
+    assert resp.status_code == 201, resp.text
+    warnings = resp.json()["warnings"]
+    assert len(warnings) == 1 and OWN_INDEX in warnings[0]
+    # 列表与单条读也带同样的告警（管理台列表页要能看见）
+    pid = resp.json()["id"]
+    assert client.get(f"/api/v1/policies/{pid}").json()["warnings"] == warnings
+
+
+def test_whitelist_with_own_market_has_no_warning(client, public_base):
+    # 大小写不同的主机名与客户端 new URL() 归一化后相等，不该误报
+    resp = _org_policy(client, _mk(OFFICIAL_INDEX, OWN_INDEX.replace("corp.example", "CORP.example")))
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["warnings"] == []
+
+
+def test_empty_whitelist_warns_and_omitted_does_not(client, public_base):
+    """空数组 = 禁一切插件，企业市场也在其中：要提醒。省略 = 不限制：不提醒。"""
+    from app.modules.policy.service.guard import marketplace_warnings
+
+    resp = _org_policy(client, {"strictKnownMarketplaces": []})
+    assert resp.status_code == 201 and len(resp.json()["warnings"]) == 1
+    assert marketplace_warnings(DENY_CURL, "https://corp.example/traj") == []
+
+
+def test_whitelist_warns_when_public_base_url_unset(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings.login, "PUBLIC_BASE_URL", "")
+    resp = _org_policy(client, _mk(OFFICIAL_INDEX))
+    assert resp.status_code == 201
+    assert "PUBLIC_BASE_URL" in resp.json()["warnings"][0]
+
+
+def test_own_market_url_matches_client_derivation():
+    """服务端推导与客户端 backendUrl(base, "marketplace", "/index") 同口径：base 去尾斜杠 + /api/v1/ctl/marketplace/index。"""
+    from app.modules.policy.service.guard import enterprise_market_url
+
+    assert enterprise_market_url("https://corp.example/traj/") == OWN_INDEX
+    assert enterprise_market_url("") is None

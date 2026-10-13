@@ -91,6 +91,57 @@ class MarketAuditListResponse(BaseModel):
     items: list[MarketAuditItem]
 
 
+class UploadTokenCreate(BaseModel):
+    """签发 CI 上传凭据。只能上传 draft 到 org_id 下的条目。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    org_id: str = Field(..., min_length=1, max_length=128)
+    # 默认 90 天、最长 1 年：到期就重签，不滑动续期
+    expires_in_days: int = Field(90, ge=1, le=365)
+    reason: str = Field(..., min_length=1, max_length=512)
+
+
+class UploadTokenItem(BaseModel):
+    id: int
+    name: str
+    org_id: str
+    status: Literal["active", "revoked", "expired"]
+    created_at: str
+    created_by: str = ""
+    expires_at: str
+    last_used_at: Optional[str] = None
+    revoked_at: Optional[str] = None
+    revoked_by: Optional[str] = None
+
+
+class UploadTokenIssued(UploadTokenItem):
+    # 明文只在这里出现一次，库里只有哈希
+    token: str
+
+
+class UploadTokenListResponse(BaseModel):
+    items: list[UploadTokenItem]
+
+
+class UploadTokenAuditItem(BaseModel):
+    id: int
+    token_id: Optional[int] = None
+    token_name: str
+    # issue / revoke / upload / denied
+    action: str
+    reason: str
+    actor: str
+    detail: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    request_id: Optional[str] = None
+
+
+class UploadTokenAuditListResponse(BaseModel):
+    items: list[UploadTokenAuditItem]
+
+
 class MarketDownloadItem(BaseModel):
     id: int
     created_at: str

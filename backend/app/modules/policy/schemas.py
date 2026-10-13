@@ -108,6 +108,8 @@ class PolicyItem(BaseModel):
     updated_at: str
     updated_by: str = ""
     etag: str = ""
+    # 不阻止写入的提醒（如白名单里漏了本企业市场）。只读派生，不入库
+    warnings: list[str] = Field(default_factory=list)
 
 
 class PolicyListResponse(BaseModel):

@@ -1202,17 +1202,34 @@ def test_marketplace_serve_requires_device_and_is_read_only():
 
 
 def test_marketplace_admin_requires_web_session():
-    """/marketplace/**（上架 / 发布 / 下架 / 审计 / 下载记录）必须挂 require_web_session，且不在 /ctl/ 下。"""
+    """/marketplace/**（上架 / 发布 / 下架 / 审计 / 下载记录）必须挂 require_web_session，且不在 /ctl/ 下。
+
+    P2′：唯一例外是上传 draft（POST /items/{name}/versions），它挂 require_uploader（cookie 或 CI 凭据）。
+    其余端点还必须挂 deny_upload_token：CI 凭据调发布 / 下架 / 登记 / 签发凭据一律 403。
+    假门禁对策：把 publish 挪进 upload_router、或去掉路由级 deny_upload_token，必须红。
+    """
     from app.core.auth.session import require_web_session
     from app.main import app
+    from app.modules.marketplace.service.upload_tokens import deny_upload_token, require_uploader
 
+    upload_path = "/api/v1/marketplace/items/{name}/versions"
     seen = 0
+    upload_seen = False
     for path, methods, dependant in _iter_app_routes(app):
         if not path.startswith("/api/v1/marketplace"):
             continue
         seen += 1
-        assert require_web_session in _route_deps(dependant), f"{sorted(methods)} {path} 没挂 require_web_session"
-    assert seen >= 8, "市场管理端点不见了"
+        deps = _route_deps(dependant)
+        if path == upload_path and "POST" in methods:
+            upload_seen = True
+            assert methods <= {"POST"}, f"{path} 只能有 POST"
+            assert require_uploader in deps, f"{path} 没挂 require_uploader"
+            continue
+        assert require_uploader not in deps, f"{sorted(methods)} {path} 不得接受 CI 上传凭据（只有上传 draft 可以）"
+        assert require_web_session in deps, f"{sorted(methods)} {path} 没挂 require_web_session"
+        assert deny_upload_token in deps, f"{sorted(methods)} {path} 没挂 deny_upload_token"
+    assert upload_seen, "上传端点不见了"
+    assert seen >= 12, "市场管理端点不见了"
 
 
 TAR_EXTRACT_CALLS = {"extractall", "extract", "makefile", "makedir", "makelink"}

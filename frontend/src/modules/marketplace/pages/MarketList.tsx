@@ -23,6 +23,7 @@ import { InboxOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { fetchOrganizations } from '../../identity/services/api'
 import { fetchUsers } from '../../auth/services/api'
+import UploadTokensPanel from '../components/UploadTokensPanel'
 import {
   createMarketItem,
   fetchMarketAudit,
@@ -440,6 +441,11 @@ export default function MarketList() {
                   />
                 </>
               ),
+            },
+            {
+              key: 'upload-tokens',
+              label: 'CI 上传凭据',
+              children: <UploadTokensPanel />,
             },
           ]}
         />

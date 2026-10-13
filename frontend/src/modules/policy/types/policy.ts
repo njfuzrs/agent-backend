@@ -44,6 +44,8 @@ export type PolicyItem = {
   updated_at: string
   updated_by: string
   etag: string
+  /** 不阻止写入的提醒（如白名单里漏了本企业市场） */
+  warnings: string[]
 }
 
 export type PolicyAuditItem = {
