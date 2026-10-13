@@ -308,6 +308,49 @@ def _validate_known_marketplaces(value: Any) -> list[dict[str, str]]:
     return out
 
 
+ENTERPRISE_MARKET_INDEX_PATH = "/api/v1/ctl/marketplace/index"
+
+
+def enterprise_market_url(public_base_url: str) -> str | None:
+    """本企业市场的 index URL，与客户端 `backendUrl(backend.url, "marketplace", "/index")` 同口径。
+
+    客户端的 backend.url 就是对外地址（生产 https://<host>/traj），服务端用 PUBLIC_BASE_URL 推。
+    没配返回 None。
+    """
+    base = (public_base_url or "").strip().rstrip("/")
+    return base + ENTERPRISE_MARKET_INDEX_PATH if base else None
+
+
+def _url_key(url: str) -> str:
+    """比较用：scheme / 主机不分大小写（客户端 new URL() 会小写化），去尾斜杠。"""
+    parts = urlsplit(url)
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}{parts.path}".rstrip("/")
+
+
+def marketplace_warnings(settings: dict[str, Any], public_base_url: str) -> list[str]:
+    """下发了 strictKnownMarketplaces 但名单里没有本企业市场 → 告警（方案 §6.3），不拒绝写入。
+
+    客户端一旦收到白名单就只认名单、**不再回退到 backend.url 那个市场**：只写官方地址，
+    自家企业市场反而会被拒。不拒绝是因为「只用官方市场」或「禁一切插件」也可能是有意的。
+    """
+    markets = settings.get("strictKnownMarketplaces")
+    if not isinstance(markets, list):
+        return []
+    own = enterprise_market_url(public_base_url)
+    if own is None:
+        return [
+            "服务端未配置 PUBLIC_BASE_URL，无法核对白名单里是否有本企业市场。"
+            "注意：下发白名单后客户端只认名单，不再默认放行本企业市场。"
+        ]
+    keys = {_url_key(m.get("url", "")) for m in markets if isinstance(m, dict)}
+    if _url_key(own) in keys:
+        return []
+    return [
+        f"白名单里没有本企业市场 {own}：客户端收到白名单后只认名单，员工将无法从企业市场安装插件。"
+        "如需同时使用官方市场，请把两个 index URL 都写上。"
+    ]
+
+
 def _has_constraint(settings: dict[str, Any]) -> bool:
     """至少一项约束，避免「空 remote」盖掉本地护栏。"""
     perms = settings.get("permissions") or {}

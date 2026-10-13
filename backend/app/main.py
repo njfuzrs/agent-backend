@@ -162,6 +162,7 @@ app.include_router(bridge_admin.router, prefix="/api/v1")
 app.include_router(users_admin.router, prefix="/api/v1")
 app.include_router(feishu_admin.router, prefix="/api/v1")
 app.include_router(marketplace_admin.router, prefix="/api/v1")
+app.include_router(marketplace_admin.upload_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health", response_model=HealthResponse)

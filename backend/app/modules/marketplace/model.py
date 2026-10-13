@@ -98,6 +98,53 @@ class MarketAudit(Base):
     )
 
 
+class MarketUploadToken(Base):
+    """CI 上传凭据（机器凭据，方案 §7）。只能把包传成 draft：不能发布、下架、登记、改可见范围。
+
+    明文只在签发响应里出现一次，库里只存 sha256。org_id 是范围：只能往这个组织的条目上传。
+    吊销是终态（revoked_at 非空即失效），不提供恢复 —— 要用就重新签一把。
+    """
+
+    __tablename__ = "market_upload_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 给人看的名字，如 ci-acme-plugins。进审计 actor（ci:<name>#<id>）
+    name = Column(Text, nullable=False)
+    token_hash = Column(Text, nullable=False, unique=True)
+    org_id = Column(Text, nullable=False)
+    created_at = Column(Text, nullable=False)
+    created_by = Column(Text, nullable=False, default="")
+    expires_at = Column(Text, nullable=False)
+    last_used_at = Column(Text, nullable=True)
+    revoked_at = Column(Text, nullable=True)
+    revoked_by = Column(Text, nullable=True)
+
+
+class MarketTokenAudit(Base):
+    """上传凭据审计：issue / revoke / upload / denied（拿机器凭据调了它没权限的接口）。只追加。
+
+    上传的版本同时记在 market_audit（action=upload，actor=ci:<name>#<id>）；这里的 upload 行方便按凭据查。
+    """
+
+    __tablename__ = "market_token_audit"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token_id = Column(
+        Integer,
+        ForeignKey("market_upload_tokens.id", ondelete="SET NULL", name="fk_market_token_audit_token_id"),
+        nullable=True,
+    )
+    token_name = Column(Text, nullable=False)
+    action = Column(Text, nullable=False)
+    reason = Column(Text, nullable=False, default="")
+    actor = Column(Text, nullable=False, default="")
+    detail_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(Text, nullable=False)
+    request_id = Column(Text, nullable=True)
+
+    __table_args__ = (Index("idx_market_token_audit_created_at", "created_at"),)
+
+
 class MarketDownload(Base):
     """一次制品下载。只追加。device / user 不建外键：人和设备删了记录仍要在。"""
 

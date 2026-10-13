@@ -466,3 +466,158 @@ def test_plugin_installed_event_is_accepted(market):
     with _db(market) as conn:
         row = conn.execute("SELECT user_ref FROM events WHERE event_name='plugin_installed'").fetchone()
     assert row[0] == _uid(market, MEMBER_UNION)
+
+
+# ---------------------------------------------------------------------------
+# P2′：CI 上传凭据 —— 只能传 draft，吊销即失效
+# ---------------------------------------------------------------------------
+TOKENS = f"{ADMIN}/upload-tokens"
+
+
+def _issue_token(c, name="ci-plugins", org_id="default", **extra):
+    _ensure_org(c, org_id)
+    resp = c.post(TOKENS, json={"name": name, "org_id": org_id, "reason": "私有仓 CI", **extra})
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def _ci_upload(c, token, version="1.0.0", name="feishu-docs"):
+    return c.post(
+        f"{ADMIN}/items/{name}/versions",
+        files={"file": ("p.tar.gz", _good_pkg(version, name), "application/gzip")},
+        headers=_bearer(token),
+    )
+
+
+def _token_audit(c):
+    with _db(c) as conn:
+        return conn.execute("SELECT action, actor, detail_json FROM market_token_audit ORDER BY id").fetchall()
+
+
+def test_upload_token_uploads_draft_only(market):
+    _ensure_org(market)
+    assert _create_item(market).status_code == 201
+    issued = _issue_token(market)
+    assert issued["token"].startswith("mkt_") and issued["status"] == "active"
+    actor = f"ci:ci-plugins#{issued['id']}"
+
+    market.cookies.clear()  # 只凭机器凭据
+    resp = _ci_upload(market, issued["token"])
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "draft"
+    assert resp.json()["created_by"] == actor
+
+    with _db(market) as conn:
+        row = conn.execute("SELECT actor FROM market_audit WHERE action='upload'").fetchone()
+        assert row[0] == actor
+        # 明文不落库
+        dump = "\n".join(str(r) for r in conn.execute("SELECT * FROM market_upload_tokens"))
+    assert issued["token"] not in dump
+    assert [a for a, *_ in _token_audit(market)] == ["issue", "upload"]
+
+    # draft 不进 index：CI 传上去的东西，没人审过之前员工看不到
+    cred = _login_device(market, MEMBER_UNION)["credential"]
+    assert market.get(INDEX, headers=_bearer(cred)).json()["plugins"] == []
+
+
+@pytest.mark.parametrize("action", ["publish", "yank"])
+def test_upload_token_cannot_publish_or_yank(market, action):
+    _ensure_org(market)
+    assert _create_item(market).status_code == 201
+    token = _issue_token(market)["token"]
+    assert _ci_upload(market, token).status_code == 201
+    if action == "yank":
+        assert _publish(market).status_code == 200
+
+    for keep_cookie in (False, True):
+        # 带着 admin cookie 也不行：只要出示了机器凭据，就按机器凭据的权限算
+        saved = dict(market.cookies)
+        if not keep_cookie:
+            market.cookies.clear()
+        resp = market.post(
+            f"{ADMIN}/items/feishu-docs/versions/1.0.0/{action}", params={"reason": "CI"}, headers=_bearer(token)
+        )
+        assert resp.status_code == 403, resp.text
+        for k, v in saved.items():
+            market.cookies.set(k, v)
+
+    expected = "draft" if action == "publish" else "published"
+    assert market.get(f"{ADMIN}/items/feishu-docs").json()["versions"][0]["status"] == expected
+    denied = [r for r in _token_audit(market) if r[0] == "denied"]
+    assert len(denied) == 2
+    assert f"/{action}" in json.loads(denied[0][2])["path"]
+
+
+def test_upload_token_cannot_reach_other_admin_endpoints(market):
+    token = _issue_token(market)["token"]
+    market.cookies.clear()
+    h = _bearer(token)
+    calls = [
+        ("get", f"{ADMIN}/items", {}),
+        ("post", f"{ADMIN}/items", {"json": {"name": "x", "org_id": "default"}}),
+        ("patch", f"{ADMIN}/items/feishu-docs", {"json": {"team_id": ""}}),
+        ("get", f"{ADMIN}/audit", {}),
+        ("get", TOKENS, {}),
+        ("post", TOKENS, {"json": {"name": "escalate", "org_id": "default", "reason": "x"}}),
+        ("post", f"{TOKENS}/1/revoke", {"params": {"reason": "x"}}),
+    ]
+    for method, url, kw in calls:
+        resp = getattr(market, method)(url, headers=h, **kw)
+        assert resp.status_code == 403, f"{method} {url} → {resp.status_code}"
+
+
+def test_revoked_upload_token_is_rejected_immediately(market):
+    _ensure_org(market)
+    assert _create_item(market).status_code == 201
+    issued = _issue_token(market)
+    assert _ci_upload(market, issued["token"], "1.0.0").status_code == 201
+
+    resp = market.post(f"{TOKENS}/{issued['id']}/revoke", params={"reason": "仓库泄漏"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "revoked"
+
+    assert _ci_upload(market, issued["token"], "1.0.1").status_code == 401
+    # 吊销后连越权尝试也只是 401：凭据本身已经不算数
+    assert market.post(
+        f"{ADMIN}/items/feishu-docs/versions/1.0.0/publish", params={"reason": "x"}, headers=_bearer(issued["token"])
+    ).status_code == 401
+    assert market.post(f"{TOKENS}/{issued['id']}/revoke", params={"reason": "again"}).status_code == 409
+    assert [a for a, *_ in _token_audit(market)] == ["issue", "upload", "revoke"]
+
+
+def test_expired_and_unknown_upload_tokens_are_401(market):
+    _ensure_org(market)
+    assert _create_item(market).status_code == 201
+    issued = _issue_token(market)
+    with _db(market) as conn:
+        conn.execute("UPDATE market_upload_tokens SET expires_at='2000-01-01T00:00:00+00:00'")
+        conn.commit()
+    assert _ci_upload(market, issued["token"]).status_code == 401
+    assert _ci_upload(market, "mkt_not-a-real-token").status_code == 401
+    listed = market.get(TOKENS).json()["items"]
+    assert listed[0]["status"] == "expired" and "token" not in listed[0]
+
+
+def test_upload_token_is_scoped_to_its_org(market):
+    _ensure_org(market, "other-org")
+    assert _create_item(market, org_id="other-org").status_code == 201
+    token = _issue_token(market, org_id="default")["token"]
+    market.cookies.clear()
+    assert _ci_upload(market, token).status_code == 403
+    assert [a for a, *_ in _token_audit(market)][-1] == "denied"
+
+
+def test_device_credential_cannot_upload(market):
+    """设备凭据不是上传凭据：没有 mkt_ 前缀，落到 cookie 校验 → 401。"""
+    _ensure_org(market)
+    assert _create_item(market).status_code == 201
+    cred = _login_device(market, MEMBER_UNION)["credential"]
+    market.cookies.clear()
+    assert _ci_upload(market, cred).status_code == 401
+
+
+def test_member_cannot_issue_upload_token(market):
+    market.cookies.clear()
+    assert _feishu_login(market, MEMBER_UNION).status_code == 302
+    resp = market.post(TOKENS, json={"name": "ci", "org_id": "default", "reason": "x"})
+    assert resp.status_code == 403

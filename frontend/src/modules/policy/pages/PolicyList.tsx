@@ -14,6 +14,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd'
@@ -248,8 +249,10 @@ export default function PolicyList() {
             ...payload,
           })
     },
-    onSuccess: async () => {
+    onSuccess: async (saved: PolicyItem) => {
       message.success(editing ? '已更新' : '已创建')
+      // 白名单漏了本企业市场：写入照常成功，但要让管理员看见后果
+      saved.warnings?.forEach(w => message.warning(w, 10))
       closeModal()
       await invalidate()
     },
@@ -329,7 +332,17 @@ export default function PolicyList() {
       title: '约束',
       key: 'summary',
       ellipsis: true,
-      render: (_, row) => settingsSummary(row.settings),
+      render: (_, row) =>
+        row.warnings?.length ? (
+          <Space size={4}>
+            <Tooltip title={row.warnings.join('\n')}>
+              <Tag color="orange">告警</Tag>
+            </Tooltip>
+            {settingsSummary(row.settings)}
+          </Space>
+        ) : (
+          settingsSummary(row.settings)
+        ),
     },
     {
       title: '下发',
@@ -610,7 +623,7 @@ export default function PolicyList() {
             name="marketsEnabled"
             label="限制插件来源（strictKnownMarketplaces）"
             valuePropName="checked"
-            extra="打开后只允许从下列市场 index URL 安装 / 加载插件，本地目录与 --plugin-dir 一律拒绝；列表留空 = 除内置外禁一切插件。需 sid-code 支持该字段的版本。"
+            extra="打开后只允许从下列市场 index URL 安装 / 加载插件，本地目录与 --plugin-dir 一律拒绝；列表留空 = 除内置外禁一切插件。注意：下发白名单后客户端不再默认放行本企业市场，要用企业市场就必须把它的 index URL（<对外地址>/api/v1/ctl/marketplace/index）也写进来。需 sid-code 支持该字段的版本。"
           >
             <Switch />
           </Form.Item>

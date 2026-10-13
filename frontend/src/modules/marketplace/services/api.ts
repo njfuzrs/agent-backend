@@ -6,6 +6,9 @@ import type {
   MarketItem,
   MarketKind,
   MarketVersionItem,
+  UploadTokenAuditItem,
+  UploadTokenIssued,
+  UploadTokenItem,
 } from '../types/marketplace'
 
 // 管理台只走 /marketplace/**（cookie 会话）。/ctl/marketplace/** 是设备通道，管理台不碰。
@@ -68,5 +71,32 @@ export async function fetchMarketDownloads(name?: string): Promise<MarketDownloa
 
 export async function fetchMarketDownloadStats(days = 30): Promise<MarketDownloadStatsItem[]> {
   const { data } = await api.get('/marketplace/downloads/stats', { params: { days } })
+  return data.items
+}
+
+// CI 上传凭据：管理台签发 / 吊销；CI 拿它只能调 POST /marketplace/items/{name}/versions（草稿）
+
+export async function fetchUploadTokens(): Promise<UploadTokenItem[]> {
+  const { data } = await api.get('/marketplace/upload-tokens')
+  return data.items
+}
+
+export async function issueUploadToken(payload: {
+  name: string
+  org_id: string
+  expires_in_days: number
+  reason: string
+}): Promise<UploadTokenIssued> {
+  const { data } = await api.post('/marketplace/upload-tokens', payload)
+  return data
+}
+
+export async function revokeUploadToken(id: number, reason: string): Promise<UploadTokenItem> {
+  const { data } = await api.post(`/marketplace/upload-tokens/${id}/revoke`, null, { params: { reason } })
+  return data
+}
+
+export async function fetchUploadTokenAudit(): Promise<UploadTokenAuditItem[]> {
+  const { data } = await api.get('/marketplace/upload-tokens/audit')
   return data.items
 }
