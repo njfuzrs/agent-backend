@@ -181,6 +181,54 @@ def test_whoami_with_bearer(client):
     assert data["user_id"] == "zhangsan@corp.com"
 
 
+def test_whoami_returns_renewed_expires_at(client):
+    """whoami 回传本次滑动续期后的过期时间，且与库里落的值一致（登录闭环 §5.1 方案 A）。
+
+    客户端靠它回写本地记录；如果回传的是续期前的值或客户端自算的值，本地与服务端还会漂移。
+    """
+    from datetime import timedelta
+
+    from app.core.config import settings
+    from app.core.timeutil import parse_iso, utc_now
+
+    tc, db_path = client
+    code = _issue_code(tc)
+    enrolled = _enroll(tc, code, device_id="dev-exp")
+    cred = enrolled["body"]["credential"]
+    enrolled_expires = parse_iso(enrolled["body"]["expires_at"])
+
+    # 把库里的过期时间拨到明天，模拟「签发很久之后」；续期后必须远晚于它。
+    conn = sqlite3.connect(db_path)
+    try:
+        soon = (utc_now() + timedelta(days=1)).isoformat()
+        conn.execute("UPDATE device_credentials SET expires_at = ?", (soon,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    before = utc_now()
+    resp = tc.get("/api/v1/ctl/whoami", headers={"Authorization": f"Bearer {cred}"})
+    after = utc_now()
+    assert resp.status_code == 200, resp.text
+    returned = resp.json()["expires_at"]
+    assert returned
+
+    ttl = timedelta(days=settings.control_plane.CTL_CREDENTIAL_TTL_DAYS)
+    returned_dt = parse_iso(returned)
+    assert before + ttl <= returned_dt <= after + ttl
+    assert returned_dt >= enrolled_expires
+
+    conn = sqlite3.connect(db_path)
+    try:
+        stored = conn.execute(
+            "SELECT expires_at FROM device_credentials WHERE token_hash = ?",
+            (hashlib.sha256(cred.encode()).hexdigest(),),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert stored == returned
+
+
 def test_revoke_invalidates_credential(client):
     tc, _ = client
     code = _issue_code(tc)

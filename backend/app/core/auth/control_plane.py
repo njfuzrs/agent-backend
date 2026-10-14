@@ -17,7 +17,7 @@ M1：查 device_credentials.token_hash → 未吊销未过期 → DeviceContext�
 """
 
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Optional
 
@@ -50,6 +50,10 @@ class DeviceContext:
     # 设备归属的人（users.id），由 CLI 登录在服务端写入。None = 未登录（注册码设备）。
     # 与自报的 user_id 不同，这一项可信（方案 §5.6）。
     user_ref: Optional[int] = None
+    # 本次鉴权滑动续期后的凭据过期时间（ISO8601 UTC）；续期提交失败时为库里仍生效的旧值。
+    # 非 require_device 构造的上下文（策略 / 预算预览）为空串。
+    # whoami 回传它，客户端据此同步本地过期时间，不必自己模仿服务端 TTL。
+    expires_at: str = ""
 
 
 async def require_device(request: Request) -> DeviceContext:
@@ -108,10 +112,16 @@ async def require_device(request: Request) -> DeviceContext:
         device.last_seen_at = now_iso
         device.updated_at = now_iso
         cred.last_used_at = now_iso
-        cred.expires_at = (now + timedelta(days=settings.control_plane.CTL_CREDENTIAL_TTL_DAYS)).isoformat()
+        # 续期前的值先存成普通字符串：提交失败 rollback 后 ORM 属性已过期，不能再读。
+        previous_expires_at = cred.expires_at
+        renewed_expires_at = (now + timedelta(days=settings.control_plane.CTL_CREDENTIAL_TTL_DAYS)).isoformat()
+        cred.expires_at = renewed_expires_at
         try:
             await db.commit()
+            ctx = replace(ctx, expires_at=renewed_expires_at)
         except Exception as exc:
+            # 续期没落库，回传库里实际生效的旧值，免得客户端记下一个服务端不认的时间。
+            ctx = replace(ctx, expires_at=previous_expires_at)
             # 提交失败不是鉴权失败，归 db（方案 §3.5）。栈按 §4.5 裁剪：
             # 数据库异常的消息里有语句和绑定参数，不能原样进 exc。
             fields, logged = db_error_fields(exc)

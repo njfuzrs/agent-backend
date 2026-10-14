@@ -19,4 +19,5 @@ async def whoami(ctx: DeviceContext = Depends(require_device)):
         team_id=ctx.team_id,
         user_id=ctx.user_id,
         user_ref=ctx.user_ref,
+        expires_at=ctx.expires_at,
     )
