@@ -28,6 +28,9 @@ class WhoAmIResponse(BaseModel):
     team_id: str = ""
     user_id: str = ""
     user_ref: Optional[int] = None
+    # 本次请求滑动续期后的凭据过期时间（ISO8601 UTC），客户端据此回写本地记录。
+    # 旧后端没有这个字段，客户端缺省时不做事。
+    expires_at: str = ""
 
 
 class OrganizationCreate(BaseModel):
