@@ -28,15 +28,10 @@ import {
   fetchTrajectoryRawText,
 } from '../services/api'
 import type { TrajectoryMeta } from '../types/trajectory'
+import { endSourceLabel, exitStatusInfo } from '../exitStatus'
 import { buildDetailModel } from '../../../utils/trajectoryDetail'
 import { formatCurrency, formatDuration, formatTokens } from '../../../utils/format'
 
-const EXIT_STATUS_MAP: Record<string, { color: string; label: string }> = {
-  end_turn: { color: 'success', label: '✅ end_turn' },
-  tool_use: { color: 'warning', label: '⚠️ tool_use' },
-  error: { color: 'error', label: '❌ error' },
-  unknown: { color: 'default', label: 'unknown' },
-}
 
 export default function TrajectoryDetail() {
   const { sessionId } = useParams<{ sessionId: string }>()
@@ -96,7 +91,8 @@ export default function TrajectoryDetail() {
     ])
   }
 
-  const statusInfo = EXIT_STATUS_MAP[meta.exit_status] || EXIT_STATUS_MAP.unknown
+  const exitInfo = exitStatusInfo(meta.exit_status)
+  const statusInfo = { color: exitInfo.tone, label: `${exitInfo.label}（${meta.exit_status || 'unknown'}）` }
   const detailModel = buildDetailModel(history || [], steps?.items || [], meta.first_prompt || '')
   const readingLoading = (shouldLoadSteps && stepsLoading) || historyLoading
 
@@ -213,6 +209,7 @@ function MetaCard({
         <Descriptions.Item label="状态">
           <Tag color={statusInfo.color}>{statusInfo.label}</Tag>
         </Descriptions.Item>
+        <Descriptions.Item label="结束方式">{endSourceLabel(meta.end_source) ?? '-'}</Descriptions.Item>
         <Descriptions.Item label="步骤">{meta.total_steps}</Descriptions.Item>
         <Descriptions.Item label="API 调用">{meta.total_api_calls}</Descriptions.Item>
         <Descriptions.Item label="Token">

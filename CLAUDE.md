@@ -137,6 +137,7 @@ agent-backend/
 ## 架构要点
 
 - **存储后端抽象**：`modules/trajectory/service/storage.py` 定义了 `StorageBackend` 协议，`LocalStorage`（本地文件）和 `OSSStorage`（对象存储 + LRU 缓存）两个实现，通过 `STORAGE_BACKEND` 环境变量切换
+- **轨迹成功率口径**：`exit_status` 表示结果，`end_source` 表示结束方式（exit / abort / terminal_closed …），两个维度不要混。成功只认 `stats_service.SUCCESS_EXIT_STATUSES`（仅 `end_turn`），不要在别处手写 `== "end_turn"`。`exit_status=terminal_closed` 只出现在「开了就关、一轮没跑」的空会话，由 `NO_TASK_EXIT_STATUSES` 排出成功率分母；空闲关终端但跑过任务的会话，sid-code 已按末轮推断 exit_status，`terminal_closed` 只留在 `end_source`。前端展示口径统一在 `frontend/src/modules/trajectory/exitStatus.ts`。由 `tests/test_trajectory_exit_status.py` 锁定
 - **数据库兼容**：`core/db.py` 根据 `DATABASE_URL` 前缀自动选择驱动，SQLite 模式自动执行 WAL pragma
 - **运维脚本的 PG 凭据只有一条路**：`deploy/pg_env.sh` 的 `load_pg_from_env` 从 `$ROOT/.env` 的 `DATABASE_URL` 解析并走 TCP。不要在脚本里写 `psql -U trajuser`——不带密码会走 unix socket 撞 pg_hba 的 `local all all peer`，每天 cron 必然 FATAL（audit 曾因此报出 `差异: -9574` 假警报，cleanup 则从未成功清理过一条）。由 `tests/test_deploy_scripts.py` 的 `test_pg_scripts_never_use_peer_auth` 拦截
 - **`psql_v` 必须走 stdin**：`psql -c` 不对 `:'name'` 做变量插值（生产 14.24 实测 `syntax error at or near ":"`）；stdin 脚本模式遇 SQL 错误默认仍返回 0，必须带 `-v ON_ERROR_STOP=1`，否则 `cleanup_deleted.sh` 的 `if ! psql_v` 会把删除失败当成功。由 `test_psql_v_*` 拦截
@@ -183,7 +184,7 @@ cd frontend && pnpm run build
 
 # 门禁自查（提交前跑一遍）
 cd backend && ruff check . && alembic check          # lint + schema 漂移
-python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_event_plugin_usage.py ../tests/test_cost.py ../tests/test_auth_login.py ../tests/test_auth_cli.py ../tests/test_identity_ledger.py ../tests/test_marketplace.py ../tests/test_deploy_scripts.py -v  # 边界 + 身份 + flag + policy + event + cost + 登录 + 身份落账 + 插件市场 + 发版脚本
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_event_plugin_usage.py ../tests/test_cost.py ../tests/test_auth_login.py ../tests/test_auth_cli.py ../tests/test_identity_ledger.py ../tests/test_marketplace.py ../tests/test_deploy_scripts.py ../tests/test_trajectory_exit_status.py -v  # 边界 + 身份 + flag + policy + event + cost + 登录 + 身份落账 + 插件市场 + 发版脚本 + 轨迹成功率口径
 
 # 数据库迁移
 cd backend && alembic upgrade head                   # 本地：建库/升级

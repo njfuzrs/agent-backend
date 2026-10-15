@@ -18,6 +18,8 @@ class TrajectoryListItem(BaseModel):
     total_tokens: int = 0
     total_cost_usd: float = 0.0
     exit_status: str = ""
+    # 结束方式（exit / abort / terminal_closed …），与 exit_status（结果）是两个维度；旧数据为 None
+    end_source: Optional[str] = None
     tools_used: list[str] = []
     first_prompt: str = ""
     quality_status: str = "unreviewed"

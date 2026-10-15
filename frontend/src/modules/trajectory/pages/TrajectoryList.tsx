@@ -20,6 +20,7 @@ import {
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
+  MinusCircleOutlined,
   SearchOutlined,
   WarningOutlined,
 } from '@ant-design/icons'
@@ -33,6 +34,13 @@ import {
   fetchTrajectories,
 } from '../services/api'
 import type { TrajectoryListItem } from '../types/trajectory'
+import {
+  EXIT_STATUS_FILTER_OPTIONS,
+  EXIT_STATUS_INFO,
+  endSourceLabel,
+  exitStatusInfo,
+  type StatusTone,
+} from '../exitStatus'
 import { downloadBlob, formatCurrency, formatDuration, formatTokens } from '../../../utils/format'
 
 const { RangePicker } = DatePicker
@@ -44,10 +52,24 @@ const TOOL_SOURCE_COLORS: Record<string, string> = {
   'sid-code': 'purple',
 }
 
-const EXIT_STATUS_ICON: Record<string, ReactNode> = {
-  end_turn: <CheckCircleOutlined style={{ color: '#52c41a' }} />,
-  tool_use: <WarningOutlined style={{ color: '#faad14' }} />,
+// 图标按 tone 取，覆盖 exitStatus.ts 里登记的全部 exit_status；未登记的值退回原文。
+const TONE_ICON: Record<StatusTone, ReactNode> = {
+  success: <CheckCircleOutlined style={{ color: '#52c41a' }} />,
+  warning: <WarningOutlined style={{ color: '#faad14' }} />,
   error: <CloseCircleOutlined style={{ color: '#ff4d4f' }} />,
+  default: <MinusCircleOutlined style={{ color: '#bfbfbf' }} />,
+}
+
+function renderExitStatus(value: string, record: TrajectoryListItem): ReactNode {
+  if (!value) return <span>-</span>
+  const info = exitStatusInfo(value)
+  const end = endSourceLabel(record.end_source)
+  const known = value in EXIT_STATUS_INFO
+  return (
+    <Tooltip title={`${info.label}（${value}）${end ? ` · 结束方式：${end}` : ''}`}>
+      {known ? TONE_ICON[info.tone] : <span>{value}</span>}
+    </Tooltip>
+  )
 }
 
 export default function TrajectoryList() {
@@ -153,7 +175,7 @@ export default function TrajectoryList() {
       dataIndex: 'exit_status',
       width: 70,
       align: 'center',
-      render: (value: string) => EXIT_STATUS_ICON[value] || <span>{value || '-'}</span>,
+      render: renderExitStatus,
     },
     {
       title: '质量',
@@ -296,13 +318,9 @@ export default function TrajectoryList() {
           <Select
             placeholder="退出状态"
             allowClear
-            style={{ width: 130 }}
-            options={[
-              { value: 'end_turn', label: '✅ end_turn' },
-              { value: 'tool_use', label: '⚠️ tool_use' },
-              { value: 'error', label: '❌ error' },
-              { value: 'unknown', label: 'unknown' },
-            ]}
+            style={{ width: 200 }}
+            popupMatchSelectWidth={false}
+            options={EXIT_STATUS_FILTER_OPTIONS}
             onChange={value => updateFilter('exit_status', value)}
           />
           <Select

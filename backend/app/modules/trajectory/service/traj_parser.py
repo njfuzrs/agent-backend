@@ -62,6 +62,8 @@ def parse_traj_content(content: bytes, tool_source: str = "claude-code") -> dict
         "total_steps": total_steps,
         "total_api_calls": model_stats.get("api_calls", metadata.get("total_api_calls", 0)),
         "exit_status": metadata.get("exit_status", info.get("exit_status", "")),
+        # 结束方式，与 exit_status 分开存（见 model.Trajectory.end_source）。非字符串一律当缺失。
+        "end_source": _str_or_none(metadata.get("end_source")),
         "tools_used": json.dumps(tools_used),
         "files_edited": json.dumps(metadata.get("files_edited", [])),
         "working_directory": metadata.get("working_directory", ""),
@@ -72,6 +74,11 @@ def parse_traj_content(content: bytes, tool_source: str = "claude-code") -> dict
         "uploaded_at": now_utc,
         "updated_at": now_utc,
     }
+
+
+def _str_or_none(value) -> Optional[str]:
+    """非空字符串原样返回，其余（缺失 / 空串 / 非字符串）返回 None。"""
+    return value if isinstance(value, str) and value else None
 
 
 def _extract_first_prompt(traj_data: dict, metadata: dict) -> str:

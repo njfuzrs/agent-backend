@@ -41,6 +41,10 @@ class Trajectory(Base):
     total_steps = Column(Integer, default=0)
     total_api_calls = Column(Integer, default=0)
     exit_status = Column(Text, default="")
+    # 会话怎么结束的（sid-code metadata.end_source：exit / abort / terminal_closed / error / clear）。
+    # 与 exit_status 是两个维度：exit_status 表示结果（成功率只看它），end_source 表示结束方式。
+    # 空闲关终端的会话 exit_status 按末轮推断，end_source=terminal_closed。旧客户端不写，为 NULL。
+    end_source = Column(Text, nullable=True)
     tools_used = Column(Text, default="[]")       # JSON 数组
     files_edited = Column(Text, default="[]")     # JSON 数组
 
