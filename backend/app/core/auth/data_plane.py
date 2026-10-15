@@ -59,9 +59,10 @@ async def verify_basic_auth(
         # 头在但用户名或口令不对。不记尝试值：reason 是枚举，够区分。
         _reject("basic_rejected", basic=True)
 
-    # 既没有会话也没有 Authorization 头。reason 与口令不对相同：
-    # basic 没有「头缺失」和「头坏了」两种处置，枚举里不分。
-    _reject("basic_rejected", basic=True)
+    # 既没有会话也没有 Authorization 头：会话过期的浏览器、发版冒烟的匿名 curl。
+    # 处置与口令不对相同（都 401），但 reason 必须分开：2026-10 曾把这类 29 次
+    # 误读成「还有客户端在用旧 Basic 口令」。basic_rejected 只留给真带了错口令的请求。
+    _reject("basic_missing", basic=True)
 
 
 async def verify_upload_token(request: Request):
