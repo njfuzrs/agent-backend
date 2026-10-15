@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Form, Input, Modal, Select, Space, Table, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import {
@@ -12,7 +12,8 @@ import {
   renameOrganization,
   renameTeam,
 } from '../services/api'
-import type { IdentityAuditItem, OrganizationItem, TeamItem } from '../types/identity'
+import type { OrganizationItem, TeamItem } from '../types/identity'
+import { identityAuditColumns } from '../auditFormat'
 
 function formatTs(value: string | null | undefined) {
   return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '—'
@@ -26,14 +27,6 @@ function errorText(err: unknown, fallback: string) {
     if (first?.msg) return first.msg
   }
   return fallback
-}
-
-const ACTION_LABEL: Record<string, string> = {
-  org_create: '新建组织',
-  org_rename: '组织改名',
-  team_create: '新建团队',
-  team_rename: '团队改名',
-  device_move: '调整设备归属',
 }
 
 // 弹窗的几种用途：新建组织 / 新建团队 / 组织改名 / 团队改名
@@ -153,31 +146,6 @@ export default function OrgTeamList() {
     },
   ]
 
-  const auditColumns: ColumnsType<IdentityAuditItem> = [
-    { title: '时间', dataIndex: 'created_at', width: 160, render: formatTs },
-    {
-      title: '动作',
-      dataIndex: 'action',
-      width: 120,
-      render: (v: string) => <Tag>{ACTION_LABEL[v] ?? v}</Tag>,
-    },
-    {
-      title: '对象',
-      key: 'target',
-      width: 240,
-      ellipsis: true,
-      render: (_v, r) => (r.target_type === 'org' ? r.target_id : `${r.org_id} / ${r.target_id}`),
-    },
-    {
-      title: '变更',
-      dataIndex: 'detail',
-      ellipsis: true,
-      render: (_v, r) => describeDetail(r),
-    },
-    { title: '理由', dataIndex: 'reason', ellipsis: true, render: (v: string) => v || '—' },
-    { title: '操作者', dataIndex: 'actor', width: 140, ellipsis: true },
-  ]
-
   const isCreate = editing?.kind === 'org-create' || editing?.kind === 'team-create'
   const modalTitle = {
     'org-create': '新建组织',
@@ -247,7 +215,7 @@ export default function OrgTeamList() {
       <Card size="small" title="变更审计（最近 100 条）">
         <Table
           rowKey="id"
-          columns={auditColumns}
+          columns={identityAuditColumns}
           dataSource={audit || []}
           loading={auditLoading}
           pagination={{ pageSize: 20 }}
@@ -307,20 +275,4 @@ export default function OrgTeamList() {
       </Modal>
     </div>
   )
-}
-
-function describeDetail(r: IdentityAuditItem): string {
-  const d = r.detail as {
-    name?: string
-    old_name?: string
-    new_name?: string
-    from?: { org_id?: string; team_id?: string }
-    to?: { org_id?: string; team_id?: string }
-  }
-  const slot = (s?: { org_id?: string; team_id?: string }) =>
-    s ? `${s.org_id || '—'} / ${s.team_id || '无团队'}` : '—'
-  if (d.from || d.to) return `${slot(d.from)} → ${slot(d.to)}`
-  if (d.old_name !== undefined) return `${d.old_name} → ${d.new_name}`
-  if (d.name) return `名称：${d.name}`
-  return '—'
 }

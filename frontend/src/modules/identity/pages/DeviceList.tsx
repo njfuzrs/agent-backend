@@ -7,7 +7,6 @@ import {
   Form,
   Input,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Table,
@@ -22,12 +21,14 @@ import {
   createEnrollCode,
   fetchDevices,
   fetchEnrollCodes,
+  fetchIdentityAudit,
   fetchOrganizations,
   fetchTeams,
   moveDevice,
   revokeDevice,
 } from '../services/api'
 import type { DeviceListItem, EnrollCodeItem } from '../types/identity'
+import { identityAuditColumns } from '../auditFormat'
 
 function formatTs(value: string | null | undefined) {
   return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '—'
@@ -47,6 +48,24 @@ export default function DeviceList() {
   const [moving, setMoving] = useState<DeviceListItem | null>(null)
   const [moveForm] = Form.useForm()
   const moveOrgId = Form.useWatch('org_id', moveForm) as string | undefined
+  // 正在吊销的设备；吊销理由必填，写进 identity_audit
+  const [revoking, setRevoking] = useState<DeviceListItem | null>(null)
+  const [revokeForm] = Form.useForm()
+  // 查看哪台设备的身份变更记录（改归属 / 吊销）；null = 弹窗关闭
+  const [auditDevice, setAuditDevice] = useState<string | null>(null)
+  // 注册码签发记录弹窗
+  const [codeAuditOpen, setCodeAuditOpen] = useState(false)
+
+  const { data: deviceAudit, isLoading: deviceAuditLoading } = useQuery({
+    queryKey: ['identity-audit', 'device', auditDevice],
+    queryFn: () => fetchIdentityAudit({ target_type: 'device', target_id: auditDevice, limit: 200 }),
+    enabled: auditDevice !== null,
+  })
+  const { data: codeAudit, isLoading: codeAuditLoading } = useQuery({
+    queryKey: ['identity-audit', 'enroll_code'],
+    queryFn: () => fetchIdentityAudit({ target_type: 'enroll_code', limit: 200 }),
+    enabled: codeAuditOpen,
+  })
 
   const { data: orgs } = useQuery({
     queryKey: ['identity-orgs'],
@@ -110,16 +129,23 @@ export default function DeviceList() {
     onSuccess: async created => {
       setIssuedCode(created.code)
       form.resetFields()
-      await queryClient.invalidateQueries({ queryKey: ['identity-enroll-codes'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['identity-enroll-codes'] }),
+        queryClient.invalidateQueries({ queryKey: ['identity-audit'] }),
+      ])
     },
     onError: () => message.error('签发注册码失败'),
   })
 
   const revokeMutation = useMutation({
-    mutationFn: revokeDevice,
+    mutationFn: ({ deviceId, reason }: { deviceId: string; reason: string }) => revokeDevice(deviceId, reason),
     onSuccess: async () => {
       message.success('已吊销该设备全部凭据')
-      await queryClient.invalidateQueries({ queryKey: ['identity-devices'] })
+      setRevoking(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['identity-devices'] }),
+        queryClient.invalidateQueries({ queryKey: ['identity-audit'] }),
+      ])
     },
     onError: () => message.error('吊销失败'),
   })
@@ -196,7 +222,7 @@ export default function DeviceList() {
     {
       title: '操作',
       key: 'action',
-      width: 340,
+      width: 420,
       render: (_value, record) => (
         <Space size="small">
           <Button type="link" style={{ padding: 0 }} onClick={() => openMove(record)}>
@@ -225,15 +251,21 @@ export default function DeviceList() {
           >
             成本
           </Button>
-          <Popconfirm
-            title="吊销后该设备立即无法访问控制面，确认？"
-            onConfirm={() => revokeMutation.mutate(record.device_id)}
+          <Button type="link" style={{ padding: 0 }} onClick={() => setAuditDevice(record.device_id)}>
+            变更记录
+          </Button>
+          <Button
+            type="link"
+            danger
+            style={{ padding: 0 }}
             disabled={record.revoked}
+            onClick={() => {
+              revokeForm.resetFields()
+              setRevoking(record)
+            }}
           >
-            <Button type="link" danger disabled={record.revoked} loading={revokeMutation.isPending}>
-              吊销
-            </Button>
-          </Popconfirm>
+            吊销
+          </Button>
         </Space>
       ),
     },
@@ -293,7 +325,15 @@ export default function DeviceList() {
         />
       </Card>
 
-      <Card size="small" title="注册码">
+      <Card
+        size="small"
+        title="注册码"
+        extra={
+          <Button type="link" style={{ padding: 0 }} onClick={() => setCodeAuditOpen(true)}>
+            签发记录
+          </Button>
+        }
+      >
         <Table
           rowKey="id"
           columns={codeColumns}
@@ -303,6 +343,69 @@ export default function DeviceList() {
           size="small"
         />
       </Card>
+
+      <Modal
+        title="吊销设备"
+        open={revoking !== null}
+        onCancel={() => setRevoking(null)}
+        okText="吊销"
+        okButtonProps={{ danger: true }}
+        onOk={async () => {
+          const values = await revokeForm.validateFields()
+          await revokeMutation.mutateAsync({ deviceId: revoking!.device_id, reason: values.reason })
+        }}
+        confirmLoading={revokeMutation.isPending}
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          设备：<code>{revoking?.device_id}</code>。吊销后它的全部凭据立即失效，无法再访问控制面；
+          要恢复需重新 <code>sid-code login</code> 或用注册码注册。
+        </Typography.Paragraph>
+        <Form form={revokeForm} layout="vertical">
+          <Form.Item name="reason" label="理由" rules={[{ required: true, whitespace: true, message: '必填' }]}>
+            <Input.TextArea rows={2} placeholder="写进审计，例如：员工离职、设备丢失" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`设备变更记录：${auditDevice ?? ''}`}
+        open={auditDevice !== null}
+        onCancel={() => setAuditDevice(null)}
+        footer={null}
+        width={960}
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary">
+          调整归属与吊销。设备上报的事件在「审计」里看。
+        </Typography.Paragraph>
+        <Table
+          rowKey="id"
+          columns={identityAuditColumns}
+          dataSource={deviceAudit || []}
+          loading={deviceAuditLoading}
+          pagination={{ pageSize: 10 }}
+          size="small"
+        />
+      </Modal>
+
+      <Modal
+        title="注册码签发记录"
+        open={codeAuditOpen}
+        onCancel={() => setCodeAuditOpen(false)}
+        footer={null}
+        width={960}
+        destroyOnHidden
+      >
+        <Table
+          rowKey="id"
+          columns={identityAuditColumns}
+          dataSource={codeAudit || []}
+          loading={codeAuditLoading}
+          pagination={{ pageSize: 10 }}
+          size="small"
+        />
+      </Modal>
 
       <Modal
         title="调整设备归属"
@@ -376,8 +479,8 @@ export default function DeviceList() {
             <Form.Item name="team_id" label="团队 ID">
               <Input placeholder="infra-platform" />
             </Form.Item>
-            <Form.Item name="note" label="备注">
-              <Input placeholder="发给谁、哪台机器" />
+            <Form.Item name="note" label="备注" rules={[{ required: true, whitespace: true, message: '必填' }]}>
+              <Input placeholder="发给谁、哪台机器（写进审计）" />
             </Form.Item>
           </Form>
         )}

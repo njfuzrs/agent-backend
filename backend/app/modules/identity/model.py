@@ -97,17 +97,19 @@ class DeviceCredential(Base):
 
 
 class IdentityAudit(Base):
-    """组织 / 团队 / 设备归属变更审计。只追加，不更新，不删除。
+    """组织 / 团队 / 设备 / 注册码的管理操作审计。只追加，不更新，不删除。
 
     不建 FK：组织、团队、设备将来被删时审计必须留下来，对象一律存对外 slug 文本。
-    target_type ∈ org / team / device；team 的 target_id 只在组织内唯一，所以 org_id 单独存。
-    detail_json 记变更前后值（如设备从哪个 org/team 移到哪个），不放任何凭据。
+    target_type ∈ org / team / device / enroll_code；team 的 target_id 只在组织内唯一，所以 org_id 单独存；
+    enroll_code 的 target_id 是 enroll_codes.id（注册码没有对外 slug）。
+    detail_json 记变更前后值（如设备从哪个 org/team 移到哪个），不放任何凭据（注册码明文和 hash 都不放）。
     """
 
     __tablename__ = "identity_audit"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    action = Column(Text, nullable=False)  # org_create / org_rename / team_create / team_rename / device_move
+    # org_create / org_rename / team_create / team_rename / device_move / enroll_code_issue / device_revoke
+    action = Column(Text, nullable=False)
     target_type = Column(Text, nullable=False)
     target_id = Column(Text, nullable=False)
     org_id = Column(Text, nullable=False, default="")

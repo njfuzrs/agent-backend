@@ -61,7 +61,7 @@ async def update_flag(
 @router.post("/{key}/disable", response_model=FlagItem)
 async def disable_flag(
     key: str,
-    reason: str = Query("", max_length=512),
+    reason: str = Query(..., min_length=1, max_length=512),
     db: AsyncSession = Depends(get_db),
     username: str = Depends(require_web_session),
 ):
@@ -72,7 +72,7 @@ async def disable_flag(
 @router.post("/{key}/enable", response_model=FlagItem)
 async def enable_flag(
     key: str,
-    reason: str = Query("", max_length=512),
+    reason: str = Query(..., min_length=1, max_length=512),
     db: AsyncSession = Depends(get_db),
     username: str = Depends(require_web_session),
 ):
@@ -82,7 +82,7 @@ async def enable_flag(
 @router.delete("/{key}", response_model=FlagDeleteResponse)
 async def delete_flag(
     key: str,
-    reason: str = Query("", max_length=512),
+    reason: str = Query(..., min_length=1, max_length=512),
     db: AsyncSession = Depends(get_db),
     username: str = Depends(require_web_session),
 ):

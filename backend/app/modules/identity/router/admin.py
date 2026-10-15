@@ -88,7 +88,7 @@ async def rename_team(
 
 @router.get("/audit", response_model=IdentityAuditListResponse)
 async def list_audit(
-    target_type: Optional[str] = Query(None, pattern="^(org|team|device)$"),
+    target_type: Optional[str] = Query(None, pattern="^(org|team|device|enroll_code)$"),
     target_id: Optional[str] = None,
     org_id: Optional[str] = None,
     limit: int = Query(200, ge=1, le=1000),
@@ -129,9 +129,11 @@ async def list_devices(
 @router.post("/devices/{device_id}/revoke", response_model=RevokeResponse)
 async def revoke_device(
     device_id: str,
+    reason: str = Query(..., min_length=1, max_length=512),
     db: AsyncSession = Depends(get_db),
 ):
-    return await admin_service.revoke_device(db, device_id)
+    """吊销设备全部凭据。理由必填（与策略 / 预算 / flag 的下架类操作同一形状：query 参数）。"""
+    return await admin_service.revoke_device(db, device_id, reason=reason)
 
 
 @router.post("/devices/{device_id}/move", response_model=DeviceMoveResponse)

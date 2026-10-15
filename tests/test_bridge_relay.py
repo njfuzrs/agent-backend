@@ -383,7 +383,7 @@ def test_revoked_device_credential_rejects_existing_session(ctx):
 
     http.cookies.clear()
     _login(http)
-    revoked = http.post("/api/v1/identity/devices/dev-revoke/revoke")
+    revoked = http.post("/api/v1/identity/devices/dev-revoke/revoke", params={"reason": "测试吊销"})
     assert revoked.status_code == 200, revoked.text
 
     with ws_client.websocket_connect("/api/v1/bridge/ws") as ws:

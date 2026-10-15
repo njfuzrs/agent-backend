@@ -16,7 +16,7 @@ export type TeamItem = {
 export type IdentityAuditItem = {
   id: number
   action: string
-  target_type: 'org' | 'team' | 'device'
+  target_type: 'org' | 'team' | 'device' | 'enroll_code'
   target_id: string
   org_id: string
   detail: Record<string, unknown>

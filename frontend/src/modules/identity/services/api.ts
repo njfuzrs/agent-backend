@@ -92,7 +92,12 @@ export async function fetchDevices(params: Record<string, unknown> = {}): Promis
   return data
 }
 
-export async function revokeDevice(deviceId: string): Promise<{ device_id: string; revoked: boolean }> {
-  const { data } = await api.post(`/identity/devices/${deviceId}/revoke`)
+export async function revokeDevice(
+  deviceId: string,
+  reason: string,
+): Promise<{ device_id: string; revoked: boolean }> {
+  const { data } = await api.post(`/identity/devices/${encodeURIComponent(deviceId)}/revoke`, null, {
+    params: { reason },
+  })
   return data
 }

@@ -241,7 +241,7 @@ def test_revoke_and_enroll_code_are_logged(client, caplog):
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="agent"):
-        revoked = client.post("/api/v1/identity/devices/dev-1/revoke")
+        revoked = client.post("/api/v1/identity/devices/dev-1/revoke", params={"reason": "测试吊销"})
     assert revoked.status_code == 200, revoked.text
     text = rendered(caplog)
     assert "event=admin_write" in text

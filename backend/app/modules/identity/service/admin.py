@@ -328,25 +328,45 @@ async def create_enroll_code(
     payload: EnrollCodeCreate,
     created_by: str,
 ) -> EnrollCodeCreated:
+    org_existed = await _org_exists(db, payload.org_id)
     org = await _get_or_create_org(db, payload.org_id, payload.org_name)
     team = None
+    team_existed = True
     if payload.team_id:
+        team_existed = await _team_exists(db, org, payload.team_id)
         team = await _get_or_create_team(db, org, payload.team_id, payload.team_name)
 
     ttl_hours = payload.ttl_hours or settings.control_plane.CTL_ENROLL_CODE_TTL_HOURS
     now_iso = utc_now_iso()
     plaintext = mint_enroll_code()
     expires_at = iso_after(hours=ttl_hours)
-    db.add(
-        EnrollCode(
-            code_hash=hash_secret(plaintext),
-            organization_id=org.id,
-            team_id=team.id if team is not None else None,
-            expires_at=expires_at,
-            created_at=now_iso,
-            created_by=created_by,
-            note=payload.note or "",
-        )
+    code = EnrollCode(
+        code_hash=hash_secret(plaintext),
+        organization_id=org.id,
+        team_id=team.id if team is not None else None,
+        expires_at=expires_at,
+        created_at=now_iso,
+        created_by=created_by,
+        note=payload.note or "",
+    )
+    db.add(code)
+    await db.flush()
+    # 审计只记注册码的行号、归属与过期时间，明文与 hash 都不进审计。
+    # 备注就是这次签发的理由（发给谁、哪台机器）；老调用方不带也能签。
+    _audit(
+        db,
+        "enroll_code_issue",
+        "enroll_code",
+        str(code.id),
+        org.org_id,
+        {
+            "team_id": team.team_id if team is not None else "",
+            "expires_at": expires_at,
+            "org_created": not org_existed,
+            "team_created": not team_existed,
+        },
+        payload.note or "",
+        now_iso,
     )
     await db.commit()
     # 明文码只在响应里出现一次，日志不记。target 用组织，不记码的任何片段。
@@ -422,19 +442,41 @@ async def list_devices(
     return DeviceListResponse(total=int(total), page=page, page_size=page_size, items=items)
 
 
-async def revoke_device(db: AsyncSession, device_id: str) -> RevokeResponse:
-    row = await db.execute(select(Device).where(Device.device_id == device_id))
+async def revoke_device(db: AsyncSession, device_id: str, reason: str) -> RevokeResponse:
+    """吊销设备全部有效凭据。理由必填，与吊销同一事务写 identity_audit。"""
+    reason = (reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="reason 必填（会进审计）")
+    row = await db.execute(
+        select(Device)
+        .options(selectinload(Device.organization), selectinload(Device.team))
+        .where(Device.device_id == device_id)
+    )
     device = row.scalar_one_or_none()
     if device is None:
         raise HTTPException(status_code=404, detail="device not found")
     now_iso = utc_now_iso()
-    await db.execute(
+    result = await db.execute(
         update(DeviceCredential)
         .where(DeviceCredential.device_id == device.id)
         .where(DeviceCredential.revoked_at.is_(None))
         .values(revoked_at=now_iso)
     )
     device.updated_at = now_iso
+    _audit(
+        db,
+        "device_revoke",
+        "device",
+        device.device_id,
+        device.organization.org_id if device.organization else "",
+        {
+            "team_id": device.team.team_id if device.team else "",
+            "user_ref": device.user_ref,
+            "revoked_credentials": int(result.rowcount or 0),
+        },
+        reason,
+        now_iso,
+    )
     await db.commit()
     _admin_write("revoke", device.device_id)
     return RevokeResponse(device_id=device.device_id, revoked=True)
@@ -443,9 +485,8 @@ async def revoke_device(db: AsyncSession, device_id: str) -> RevokeResponse:
 def _admin_write(action: str, target_id: str) -> None:
     """管理台写操作完成一条。actor 从上下文取（方案 §3.6、§3.9）。
 
-    组织 / 团队 / 设备归属变更另有 identity_audit 表（D1）；吊销与签发注册码
-    的审计表留给 D5，目前这条日志仍是它们的唯一运行记录。
-    注册码明文不进日志，它只在响应里出现一次。
+    业务审计在 identity_audit 表（组织 / 团队 / 改归属 / 签发注册码 / 吊销设备），
+    这条日志只是运行记录。注册码明文不进日志，它只在响应里出现一次。
     """
     logger.info(
         "admin write",
@@ -473,6 +514,16 @@ def _to_list_item(device: Device) -> DeviceListItem:
         credential_expires_at=current.expires_at if current else None,
         revoked=current is None and len(device.credentials) > 0,
     )
+
+
+async def _org_exists(db: AsyncSession, org_id: str) -> bool:
+    row = await db.execute(select(Organization.id).where(Organization.org_id == org_id))
+    return row.scalar_one_or_none() is not None
+
+
+async def _team_exists(db: AsyncSession, org: Organization, team_id: str) -> bool:
+    row = await db.execute(select(Team.id).where(Team.organization_id == org.id, Team.team_id == team_id))
+    return row.scalar_one_or_none() is not None
 
 
 async def _get_or_create_org(db: AsyncSession, org_id: str, name: str) -> Organization:

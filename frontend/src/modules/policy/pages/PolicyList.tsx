@@ -27,10 +27,18 @@ import {
   evaluateDevicePolicy,
   fetchPolicyAudit,
   fetchPolicies,
+  fetchUpperPolicies,
   setPolicyEnabled,
   updatePolicy,
 } from '../services/api'
-import type { PolicyAuditItem, PolicyEvaluate, PolicyItem, PolicyScopeType, PolicySettings } from '../types/policy'
+import type {
+  PolicyAuditItem,
+  PolicyEvaluate,
+  PolicyItem,
+  PolicyLayer,
+  PolicyScopeType,
+  PolicySettings,
+} from '../types/policy'
 
 const LIMIT_FEATURES = [
   { key: 'mcp', label: '禁止 MCP' },
@@ -158,7 +166,25 @@ function toSettings(values: FormValues): PolicySettings {
   return settings
 }
 
+const LAYER_LABEL: Record<PolicyScopeType, string> = { org: '组织', team: '团队', device: '设备' }
+
+function layerName(l: PolicyLayer): string {
+  return `${LAYER_LABEL[l.layer]} ${l.scope_id}`
+}
+
 function fromItem(row: PolicyItem): FormValues {
+  return {
+    scope_type: row.scope_type,
+    org_id: row.org_id,
+    scope_id: row.scope_id,
+    ...settingsToFields(row.settings),
+    reason: '',
+  }
+}
+
+/** settings → 表单里的约束字段（不含层 / 对象 / 原因）。「从上层复制」也用它。 */
+function settingsToFields(settings: PolicySettings): Partial<FormValues> {
+  const row = { settings }
   const limits = Object.entries(row.settings.policyLimits ?? {})
     .filter(([, v]) => v.allowed === false)
     .map(([k]) => k)
@@ -168,9 +194,6 @@ function fromItem(row: PolicyItem): FormValues {
   }
   const strict = row.settings.strictPluginOnlyCustomization
   return {
-    scope_type: row.scope_type,
-    org_id: row.org_id,
-    scope_id: row.scope_id,
     deny: (row.settings.permissions?.deny ?? []).join('\n'),
     allow: (row.settings.permissions?.allow ?? []).join('\n'),
     ask: (row.settings.permissions?.ask ?? []).join('\n'),
@@ -186,7 +209,6 @@ function fromItem(row: PolicyItem): FormValues {
     bridgeDisabled: row.settings.bridgeEnabled === false,
     marketsEnabled: Array.isArray(row.settings.strictKnownMarketplaces),
     markets: (row.settings.strictKnownMarketplaces ?? []).map(m => m.url).join('\n'),
-    reason: '',
   }
 }
 
@@ -203,6 +225,32 @@ export default function PolicyList() {
   const [form] = Form.useForm<FormValues>()
   const [previewDeviceId, setPreviewDeviceId] = useState('')
   const [previewHit, setPreviewHit] = useState<PolicyEvaluate | null | 'empty'>(null)
+  // 新建时在 team / device 层：查会被这一层整份遮蔽的上层（D3）
+  const watchScopeType = Form.useWatch('scope_type', form) as PolicyScopeType | undefined
+  const watchScopeId = (Form.useWatch('scope_id', form) as string | undefined)?.trim() ?? ''
+  const watchOrgId = (Form.useWatch('org_id', form) as string | undefined)?.trim() ?? ''
+  const upperEnabled =
+    createOpen &&
+    editing === null &&
+    ((watchScopeType === 'device' && !!watchScopeId) ||
+      (watchScopeType === 'team' && !!watchScopeId && !!watchOrgId))
+  const { data: uppers } = useQuery({
+    queryKey: ['policy-upper', watchScopeType, watchScopeId, watchOrgId],
+    queryFn: () =>
+      fetchUpperPolicies({ scope_type: watchScopeType!, scope_id: watchScopeId, org_id: watchOrgId }),
+    enabled: upperEnabled,
+    retry: false,
+  })
+  const copyFromUpper = (layer: PolicyLayer) => {
+    form.setFieldsValue({
+      limits: [],
+      limitReasons: {},
+      disabledModes: [],
+      strictSurfaces: [],
+      ...settingsToFields(layer.settings),
+    })
+    message.success(`已复制 ${layerName(layer)} 的内容，按需改动后保存`)
+  }
 
   const { data: orgs } = useQuery({
     queryKey: ['identity-organizations'],
@@ -500,6 +548,26 @@ export default function PolicyList() {
             </Typography.Text>
           )}
         </Space>
+        {previewHit && previewHit !== 'empty' && previewHit.shadowed?.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 12 }}
+            message={`被遮蔽的上层策略（对这台设备整份不生效，字段不合并）`}
+            description={
+              <Space direction="vertical" size={2}>
+                {previewHit.shadowed.map(l => (
+                  <span key={l.policy_id}>
+                    <Tag>{l.layer}</Tag>
+                    <Typography.Text code>{l.scope_id}</Typography.Text>
+                    {' · '}
+                    {settingsSummary(l.settings)}
+                  </span>
+                ))}
+              </Space>
+            }
+          />
+        )}
       </Card>
 
       <Modal
@@ -517,6 +585,26 @@ export default function PolicyList() {
           onFinish={values => saveMutation.mutate(values)}
           initialValues={{ scope_type: 'org' }}
         >
+          {upperEnabled && (uppers?.length ?? 0) > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={`此层生效后，上层 ${uppers!.map(layerName).join('、')} 对这些设备不再生效`}
+              description={
+                <Space direction="vertical" size={4}>
+                  <span>策略按 device &gt; team &gt; org 只取一份、不合并字段。要保留上层约束，先复制再增改。</span>
+                  <Space wrap>
+                    {uppers!.map(l => (
+                      <Button key={l.policy_id} size="small" onClick={() => copyFromUpper(l)}>
+                        从{layerName(l)}复制内容
+                      </Button>
+                    ))}
+                  </Space>
+                </Space>
+              }
+            />
+          )}
           <Form.Item name="scope_type" label="层" rules={[{ required: true }]}>
             <Select
               disabled={editing !== null}

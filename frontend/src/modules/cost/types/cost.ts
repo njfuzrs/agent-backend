@@ -120,7 +120,7 @@ export type BudgetAuditItem = {
 }
 
 /** 预览命中：该设备会命中哪一层。层级由服务端求值，前端不自己排 device>team>org。 */
-export type BudgetEvaluate = {
+export type BudgetLayer = {
   layer: BudgetScopeType
   budget_id: number
   scope_id: string
@@ -130,4 +130,9 @@ export type BudgetEvaluate = {
   limit_usd: number
   used_usd: number
   enforcement: BudgetEnforcement
+}
+
+/** shadowed = 被命中层整份遮蔽的上层预算，对该设备不生效 */
+export type BudgetEvaluate = BudgetLayer & {
+  shadowed: BudgetLayer[]
 }

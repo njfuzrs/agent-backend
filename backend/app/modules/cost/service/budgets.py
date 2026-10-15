@@ -182,8 +182,63 @@ async def evaluate_for_device(db: AsyncSession, device_id: str) -> Optional[Budg
     return await evaluate(db, ctx)
 
 
-async def to_evaluate_payload(db: AsyncSession, budget: Budget) -> dict[str, Any]:
-    """管理台 evaluate 响应。layer = 命中的 scope_type。"""
+async def _layer_chain(db: AsyncSession, ctx: DeviceContext) -> list[Budget]:
+    """按 device > team > org 列出每层会下发的那一份预算（取法与 evaluate 相同）。
+
+    第一份是命中层，其余是被它整份遮蔽的上层（D3）。只给管理台预览，下发仍走 evaluate。
+    """
+    chain: list[Budget] = []
+    device = await _find_enabled(db, "device", ctx.device_id)
+    if device is not None:
+        chain.append(device)
+    if ctx.team_id:
+        team = await _find_enabled(db, "team", ctx.team_id, org_id=ctx.org_id)
+        if team is not None:
+            chain.append(team)
+    org = await _find_enabled(db, "org", ctx.org_id, org_id=ctx.org_id)
+    if org is not None:
+        chain.append(org)
+    return chain
+
+
+async def layer_chain_for_device(db: AsyncSession, device_id: str) -> list[Budget]:
+    ref = await identity_admin.get_device(db, device_id)
+    if ref is None:
+        raise HTTPException(status_code=404, detail=f"device {device_id!r} 不存在")
+    ctx = DeviceContext(device_id=ref.device_id, org_id=ref.org_id, team_id=ref.team_id)
+    return await _layer_chain(db, ctx)
+
+
+async def upper_budgets(db: AsyncSession, scope_type: str, scope_id: str, org_id: str) -> list[dict[str, Any]]:
+    """在 scope 上新建一份预算后，会被它整份遮蔽的上层预算（D3）。
+
+    device：该设备当前团队（若有）+ 组织，org 以设备当前归属为准。team：所在组织。org：空。
+    """
+    if scope_type == "device":
+        ref = await identity_admin.get_device(db, scope_id)
+        if ref is None:
+            raise HTTPException(status_code=404, detail=f"设备 {scope_id!r} 不存在")
+        chain = await _layer_chain(db, DeviceContext(device_id=ref.device_id, org_id=ref.org_id, team_id=ref.team_id))
+        uppers = [b for b in chain if b.scope_type != "device"]
+    elif scope_type == "team":
+        org = await _find_enabled(db, "org", org_id, org_id=org_id)
+        uppers = [org] if org is not None else []
+    elif scope_type == "org":
+        uppers = []
+    else:
+        raise HTTPException(status_code=422, detail=f"未知 scope_type {scope_type!r}")
+    return [await _layer_payload(db, b) for b in uppers]
+
+
+async def to_evaluate_payload(db: AsyncSession, chain: list[Budget]) -> dict[str, Any]:
+    """管理台 evaluate 响应。layer = 命中的 scope_type；shadowed = 被整份遮蔽的上层（D3）。"""
+    hit = await _layer_payload(db, chain[0])
+    hit["shadowed"] = [await _layer_payload(db, b) for b in chain[1:]]
+    return hit
+
+
+async def _layer_payload(db: AsyncSession, budget: Budget) -> dict[str, Any]:
+    """一层预算的预览形状：命中层与被遮蔽层共用。"""
     key = current_period_key(budget.period)
     used = await sum_used_usd(
         db,
