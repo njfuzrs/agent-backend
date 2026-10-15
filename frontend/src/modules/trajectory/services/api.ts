@@ -86,6 +86,8 @@ export async function checkAuth(): Promise<boolean> {
 export interface LoginOptions {
   feishu_enabled: boolean
   password_enabled: boolean
+  // 注册端点开关（CTL_ENROLL_ENABLED）：设备页据此把「签发注册码」置灰（D2）
+  enroll_enabled: boolean
 }
 
 export async function fetchLoginOptions(): Promise<LoginOptions> {
@@ -93,8 +95,9 @@ export async function fetchLoginOptions(): Promise<LoginOptions> {
     const { data } = await api.get<LoginOptions>('/auth/options')
     return data
   } catch {
-    // 拿不到就只给口令表单：后端没起来时点飞书按钮也只会 502
-    return { feishu_enabled: false, password_enabled: true }
+    // 拿不到就只给口令表单：后端没起来时点飞书按钮也只会 502。
+    // enroll_enabled 给 true（不置灰）：拿不到开关不等于服务端关着，不替服务端下结论。
+    return { feishu_enabled: false, password_enabled: true, enroll_enabled: true }
   }
 }
 
