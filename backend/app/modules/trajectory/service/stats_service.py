@@ -9,6 +9,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.trajectory.model import ToolStep, Trajectory
 
+# 成功口径的唯一事实源：exit_status 表示「结果」，只有正常收尾才算成功。
+#
+# 刻意不含 terminal_closed：它是「结束方式」（落在 end_source），不是结果。
+# sid-code 在空闲关终端时会按末轮推断 exit_status（正常收尾 → end_turn），
+# 只有一轮都没跑过才落 exit_status=terminal_closed——没提问不算成功也不算失败的任务。
+# 若把它放进来，「先 Esc 打断再关窗口」那 ~11% 的会话会被误算成功（2026-10-15 实测 9/82）。
+SUCCESS_EXIT_STATUSES = frozenset({"end_turn"})
+
+# 不进成功率分母的 exit_status：没有任务可评判的会话。
+# exit_status=terminal_closed 只在「开了就关、一轮都没跑」时出现（sid-code collector），
+# 计入分母会把空会话算成失败，曲线随「开了多少空窗口」漂移。
+# 只影响 success_rate；total_trajectories / count 仍按全部会话计。
+NO_TASK_EXIT_STATUSES = frozenset({"terminal_closed"})
+
+
+def is_success(exit_status: Optional[str]) -> bool:
+    return (exit_status or "") in SUCCESS_EXIT_STATUSES
+
+
+def success_rate(items: list[Trajectory]) -> float:
+    """成功率 = 成功会话数 ÷（全部会话 − 无任务会话）。分母为 0 时返回 0.0。"""
+    judged = [t for t in items if (t.exit_status or "") not in NO_TASK_EXIT_STATUSES]
+    if not judged:
+        return 0.0
+    return round(sum(1 for t in judged if is_success(t.exit_status)) / len(judged), 4)
+
 
 def build_trajectory_filters(
     *,
@@ -60,7 +86,6 @@ async def get_overview(
     total_tokens = sum(t.total_tokens or 0 for t in trajectories)
     total_cost = sum(t.total_cost_usd or 0.0 for t in trajectories)
     total_steps = sum(t.total_steps or 0 for t in trajectories)
-    success_count = sum(1 for t in trajectories if (t.exit_status or "") == "end_turn")
 
     return {
         "total_trajectories": total,
@@ -68,7 +93,7 @@ async def get_overview(
         "total_cost_usd": round(total_cost, 4),
         "avg_steps_per_trajectory": round(total_steps / total, 2) if total else 0.0,
         "avg_cost_per_trajectory": round(total_cost / total, 4) if total else 0.0,
-        "success_rate": round(success_count / total, 4) if total else 0.0,
+        "success_rate": success_rate(trajectories),
         "tool_source_distribution": dict(Counter(t.tool_source or "unknown" for t in trajectories)),
         "model_distribution": dict(Counter((t.model or "unknown") for t in trajectories)),
         "quality_distribution": dict(Counter((t.quality_status or "unreviewed") for t in trajectories)),
@@ -92,7 +117,6 @@ async def get_trends(
     points = []
     for bucket in sorted(bucket_map):
         items = bucket_map[bucket]
-        success_count = sum(1 for item in items if (item.exit_status or "") == "end_turn")
         total_steps = sum(item.total_steps or 0 for item in items)
         total_tokens = sum(item.total_tokens or 0 for item in items)
         total_cost = sum(item.total_cost_usd or 0.0 for item in items)
@@ -105,7 +129,7 @@ async def get_trends(
                 "total_tokens": total_tokens,
                 "total_cost_usd": round(total_cost, 4),
                 "avg_steps": round(total_steps / count, 2) if count else 0.0,
-                "success_rate": round(success_count / count, 4) if count else 0.0,
+                "success_rate": success_rate(items),
             }
         )
 

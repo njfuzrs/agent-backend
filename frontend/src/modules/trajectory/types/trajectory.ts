@@ -12,6 +12,8 @@ export interface TrajectoryListItem {
   total_tokens: number
   total_cost_usd: number
   exit_status: string
+  /** 结束方式（exit / abort / terminal_closed …），与 exit_status（结果）是两个维度；旧数据为 null */
+  end_source: string | null
   tools_used: string[]
   first_prompt: string
   quality_status: string

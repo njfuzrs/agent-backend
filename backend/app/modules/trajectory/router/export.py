@@ -155,6 +155,7 @@ def _build_sft_record(
         "total_tokens": trajectory.total_tokens,
         "total_cost_usd": trajectory.total_cost_usd,
         "exit_status": trajectory.exit_status,
+        "end_source": trajectory.end_source,
         "tools_used": _parse_json_list(trajectory.tools_used),
     }
 
