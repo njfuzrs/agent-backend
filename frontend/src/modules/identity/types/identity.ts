@@ -5,6 +5,34 @@ export type OrganizationItem = {
   device_count: number
 }
 
+export type TeamItem = {
+  org_id: string
+  team_id: string
+  name: string
+  created_at: string
+  device_count: number
+}
+
+export type IdentityAuditItem = {
+  id: number
+  action: string
+  target_type: 'org' | 'team' | 'device'
+  target_id: string
+  org_id: string
+  detail: Record<string, unknown>
+  reason: string
+  actor: string
+  created_at: string
+  request_id: string | null
+}
+
+export type DeviceMoveResponse = {
+  device_id: string
+  org_id: string
+  team_id: string
+  changed: boolean
+}
+
 export type EnrollCodeCreated = {
   code: string
   org_id: string

@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate, useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { Layout, Menu, Typography, Button, Space, Spin, Result } from 'antd'
 import {
+  ApartmentOutlined,
   ApiOutlined,
   DashboardOutlined,
   DesktopOutlined,
@@ -20,6 +21,7 @@ import Dashboard from './modules/trajectory/pages/Dashboard'
 import TrajectoryList from './modules/trajectory/pages/TrajectoryList'
 import TrajectoryDetail from './modules/trajectory/pages/TrajectoryDetail'
 import DeviceList from './modules/identity/pages/DeviceList'
+import OrgTeamList from './modules/identity/pages/OrgTeamList'
 import FlagList from './modules/flag/pages/FlagList'
 import PolicyList from './modules/policy/pages/PolicyList'
 import AuditOverview from './modules/event/pages/AuditOverview'
@@ -63,6 +65,8 @@ function ProtectedLayout() {
     ? '/trajectories'
     : location.pathname.startsWith('/devices')
       ? '/devices'
+      : location.pathname.startsWith('/orgs')
+      ? '/orgs'
       : location.pathname.startsWith('/flags')
         ? '/flags'
         : location.pathname.startsWith('/policies')
@@ -118,6 +122,7 @@ function ProtectedLayout() {
             { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
             { key: '/trajectories', icon: <UnorderedListOutlined />, label: '轨迹' },
             { key: '/devices', icon: <DesktopOutlined />, label: '设备' },
+            { key: '/orgs', icon: <ApartmentOutlined />, label: '组织与团队' },
             { key: '/flags', icon: <FlagOutlined />, label: 'Flag' },
             { key: '/policies', icon: <SafetyCertificateOutlined />, label: '策略' },
             { key: '/audit', icon: <AuditOutlined />, label: '审计' },
@@ -154,6 +159,7 @@ function App() {
         <Route path="/trajectories" element={<TrajectoryList />} />
         <Route path="/trajectories/:sessionId" element={<TrajectoryDetail />} />
         <Route path="/devices" element={<DeviceList />} />
+        <Route path="/orgs" element={<OrgTeamList />} />
         <Route path="/flags" element={<FlagList />} />
         <Route path="/policies" element={<PolicyList />} />
         <Route path="/audit" element={<AuditOverview />} />
