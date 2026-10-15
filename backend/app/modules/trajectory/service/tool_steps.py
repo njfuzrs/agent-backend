@@ -7,6 +7,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.trajectory.model import ToolStep, Trajectory
+from app.modules.trajectory.service.traj_parser import strip_nul
 
 
 def extract_tool_steps(traj_data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -44,7 +45,8 @@ def extract_tool_steps(traj_data: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
 
-    return extracted
+    # tool_input_summary 取自工具参数原文，可能带 NUL；PG text 不收（见 strip_nul）。
+    return strip_nul(extracted)
 
 
 async def sync_tool_steps(
