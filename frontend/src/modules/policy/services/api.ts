@@ -1,5 +1,5 @@
 import api from '../../trajectory/services/api'
-import type { PolicyAuditItem, PolicyEvaluate, PolicyItem, PolicySettings } from '../types/policy'
+import type { PolicyAuditItem, PolicyEvaluate, PolicyItem, PolicyLayer, PolicySettings } from '../types/policy'
 
 // 写口在 /policies/**（cookie 会话），不是 /ctl/policy —— 后者是给客户端读的设备通道。
 // 管理台永远不碰 /ctl/**。
@@ -51,4 +51,14 @@ export async function evaluateDevicePolicy(deviceId: string): Promise<PolicyEval
   })
   if (status === 204) return null
   return data
+}
+
+/** 在这一层新建后，哪些上层生效策略会对这些设备整份失效（D3） */
+export async function fetchUpperPolicies(params: {
+  scope_type: string
+  scope_id: string
+  org_id?: string
+}): Promise<PolicyLayer[]> {
+  const { data } = await api.get('/policies/upper', { params })
+  return data.items
 }

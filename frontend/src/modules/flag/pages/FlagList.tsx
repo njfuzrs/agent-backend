@@ -7,7 +7,6 @@ import {
   Form,
   Input,
   Modal,
-  Popconfirm,
   Space,
   Table,
   Tag,
@@ -60,6 +59,10 @@ export default function FlagList() {
   const [editing, setEditing] = useState<FlagItem | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [auditKey, setAuditKey] = useState<string | null>(null)
+  // 停用 / 启用 / 删除都要先填理由（D6：与策略、预算同一口径，后端必填）
+  const [toggleTarget, setToggleTarget] = useState<{ key: string; enabled: boolean } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [actionReason, setActionReason] = useState('')
   const [form] = Form.useForm<FormValues>()
 
   const { data: flags, isLoading } = useQuery({
@@ -110,19 +113,23 @@ export default function FlagList() {
   })
 
   const toggleMutation = useMutation({
-    mutationFn: ({ key, enabled }: { key: string; enabled: boolean }) =>
-      setFlagEnabled(key, enabled),
+    mutationFn: ({ key, enabled, reason }: { key: string; enabled: boolean; reason: string }) =>
+      setFlagEnabled(key, enabled, reason),
     onSuccess: async (_data, vars) => {
       message.success(vars.enabled ? '已启用' : '已停用，客户端下次刷新会回落默认值')
+      setToggleTarget(null)
+      setActionReason('')
       await invalidate()
     },
     onError: err => message.error(errorText(err, '操作失败')),
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (key: string) => deleteFlag(key),
+    mutationFn: ({ key, reason }: { key: string; reason: string }) => deleteFlag(key, reason),
     onSuccess: async () => {
       message.success('已删除，审计记录保留')
+      setDeleteTarget(null)
+      setActionReason('')
       await invalidate()
     },
     onError: err => message.error(errorText(err, '删除失败')),
@@ -199,23 +206,26 @@ export default function FlagList() {
           </Button>
           <Button
             size="small"
-            onClick={() => toggleMutation.mutate({ key: row.key, enabled: row.disabled })}
+            onClick={() => {
+              setActionReason('')
+              setToggleTarget({ key: row.key, enabled: row.disabled })
+            }}
           >
             {row.disabled ? '启用' : '停用'}
           </Button>
           <Button size="small" onClick={() => setAuditKey(row.key)}>
             审计
           </Button>
-          <Popconfirm
-            title={`删除 ${row.key}？`}
-            description="客户端下次刷新会回落默认值。审计记录保留。"
-            okButtonProps={{ danger: true }}
-            onConfirm={() => deleteMutation.mutate(row.key)}
+          <Button
+            size="small"
+            danger
+            onClick={() => {
+              setActionReason('')
+              setDeleteTarget(row.key)
+            }}
           >
-            <Button size="small" danger>
-              删除
-            </Button>
-          </Popconfirm>
+            删除
+          </Button>
         </Space>
       ),
     },
@@ -312,6 +322,59 @@ export default function FlagList() {
             <Input placeholder="灰度 20% / 事故复盘收紧" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        open={toggleTarget !== null}
+        title={toggleTarget ? `${toggleTarget.enabled ? '启用' : '停用'} ${toggleTarget.key}` : ''}
+        onCancel={() => {
+          setToggleTarget(null)
+          setActionReason('')
+        }}
+        onOk={() => {
+          if (!toggleTarget) return
+          if (!actionReason.trim()) {
+            message.error('原因必填')
+            return
+          }
+          toggleMutation.mutate({ ...toggleTarget, reason: actionReason.trim() })
+        }}
+        confirmLoading={toggleMutation.isPending}
+      >
+        {toggleTarget && !toggleTarget.enabled && (
+          <Typography.Paragraph type="secondary">停用后不再下发，客户端下次刷新回落默认值。</Typography.Paragraph>
+        )}
+        <Input
+          placeholder="为什么停用 / 启用（写进审计）"
+          value={actionReason}
+          onChange={e => setActionReason(e.target.value)}
+        />
+      </Modal>
+
+      <Modal
+        open={deleteTarget !== null}
+        title={`删除 ${deleteTarget ?? ''}`}
+        onCancel={() => {
+          setDeleteTarget(null)
+          setActionReason('')
+        }}
+        okButtonProps={{ danger: true }}
+        onOk={() => {
+          if (!deleteTarget) return
+          if (!actionReason.trim()) {
+            message.error('原因必填')
+            return
+          }
+          deleteMutation.mutate({ key: deleteTarget, reason: actionReason.trim() })
+        }}
+        confirmLoading={deleteMutation.isPending}
+      >
+        <Typography.Paragraph type="secondary">客户端下次刷新会回落默认值。审计记录保留。</Typography.Paragraph>
+        <Input
+          placeholder="为什么删除（写进审计）"
+          value={actionReason}
+          onChange={e => setActionReason(e.target.value)}
+        />
       </Modal>
 
       <Modal

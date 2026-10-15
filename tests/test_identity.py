@@ -235,7 +235,7 @@ def test_revoke_invalidates_credential(client):
     enrolled = _enroll(tc, code, device_id="dev-rev")
     cred = enrolled["body"]["credential"]
 
-    resp = tc.post("/api/v1/identity/devices/dev-rev/revoke")
+    resp = tc.post("/api/v1/identity/devices/dev-rev/revoke", params={"reason": "测试吊销"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["revoked"] is True
 

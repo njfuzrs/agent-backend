@@ -109,11 +109,58 @@ async def evaluate(db: AsyncSession, ctx: DeviceContext) -> Optional[Policy]:
 
 async def evaluate_for_device(db: AsyncSession, device_id: str) -> Optional[Policy]:
     """管理台预览用。走 identity service 查设备，不 import identity.model。"""
+    chain = await layer_chain_for_device(db, device_id)
+    return chain[0] if chain else None
+
+
+async def _layer_chain(db: AsyncSession, ctx: DeviceContext) -> list[Policy]:
+    """按 device > team > org 列出该设备三层上**全部**生效策略（至多三份）。
+
+    第一份就是 evaluate 的命中结果，其余是被它整份遮蔽的上层（D3：管理台要让人看见）。
+    下发仍只走 evaluate，这里只给管理台预览。
+    """
+    chain: list[Policy] = []
+    device = await _find_enabled(db, "device", ctx.device_id)
+    if device is not None:
+        chain.append(device)
+    if ctx.team_id:
+        team = await _find_enabled(db, "team", ctx.team_id, org_id=ctx.org_id)
+        if team is not None:
+            chain.append(team)
+    org = await _find_enabled(db, "org", ctx.org_id, org_id=ctx.org_id)
+    if org is not None:
+        chain.append(org)
+    return chain
+
+
+async def layer_chain_for_device(db: AsyncSession, device_id: str) -> list[Policy]:
     ref = await identity_admin.get_device(db, device_id)
     if ref is None:
         raise HTTPException(status_code=404, detail=f"device {device_id!r} 不存在")
     ctx = DeviceContext(device_id=ref.device_id, org_id=ref.org_id, team_id=ref.team_id)
-    return await evaluate(db, ctx)
+    return await _layer_chain(db, ctx)
+
+
+async def upper_policies(db: AsyncSession, scope_type: str, scope_id: str, org_id: str) -> list[dict[str, Any]]:
+    """在 scope 上新建 / 生效一份策略后，会被它整份遮蔽的上层生效策略（D3）。
+
+    device：该设备当前所在团队（若有）+ 组织；org_id 以设备当前归属为准，忽略入参。
+    team：所在组织。org：没有上层，返回空。
+    """
+    if scope_type == "device":
+        ref = await identity_admin.get_device(db, scope_id)
+        if ref is None:
+            raise HTTPException(status_code=404, detail=f"设备 {scope_id!r} 不存在")
+        chain = await _layer_chain(db, DeviceContext(device_id=ref.device_id, org_id=ref.org_id, team_id=ref.team_id))
+        uppers = [p for p in chain if p.scope_type != "device"]
+    elif scope_type == "team":
+        org = await _find_enabled(db, "org", org_id, org_id=org_id)
+        uppers = [org] if org is not None else []
+    elif scope_type == "org":
+        uppers = []
+    else:
+        raise HTTPException(status_code=422, detail=f"未知 scope_type {scope_type!r}")
+    return [_layer_payload(p) for p in uppers]
 
 
 # ---------------------------------------------------------------------------
@@ -413,16 +460,23 @@ def _audit(
     )
 
 
-def to_evaluate_payload(policy: Policy) -> dict[str, Any]:
-    """管理台 evaluate 响应。layer = 命中的 scope_type。"""
-    item = _to_item(policy)
+def _layer_payload(policy: Policy) -> dict[str, Any]:
+    """一层策略的预览形状：命中层与被遮蔽层共用。"""
     return {
         "layer": policy.scope_type,
         "policy_id": policy.id,
         "scope_id": policy.scope_id,
         "org_id": policy.org_id,
-        "settings": item.settings,
+        "settings": _to_item(policy).settings,
     }
+
+
+def to_evaluate_payload(chain: list[Policy]) -> dict[str, Any]:
+    """管理台 evaluate 响应。layer = 命中的 scope_type；shadowed = 被整份遮蔽的上层（D3）。
+
+    chain 非空，第一份是命中层。字段不合并：shadowed 里的约束对该设备**完全不生效**。
+    """
+    return {**_layer_payload(chain[0]), "shadowed": [_layer_payload(p) for p in chain[1:]]}
 
 
 def _to_item(policy: Policy) -> PolicyItem:

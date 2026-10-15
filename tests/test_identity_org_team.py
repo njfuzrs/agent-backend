@@ -161,6 +161,40 @@ def test_writes_require_reason_and_valid_slug(client):
     assert no_reason.status_code == 422
 
 
+def test_enroll_code_issue_and_device_revoke_write_audit(client):
+    """D5：签发注册码、吊销设备同事务写 identity_audit；吊销理由必填；审计里不出现注册码明文。"""
+    _login_device(client, MEMBER_UNION)
+    _as_admin(client)
+    issued = client.post(
+        "/api/v1/identity/enroll-codes",
+        json={"org_id": "corp-ci", "team_id": "build", "note": "给构建机 A"},
+    )
+    assert issued.status_code == 201, issued.text
+    plaintext = issued.json()["code"]
+
+    codes = client.get("/api/v1/identity/audit", params={"target_type": "enroll_code"}).json()["items"]
+    assert len(codes) == 1
+    row = codes[0]
+    assert row["action"] == "enroll_code_issue" and row["org_id"] == "corp-ci"
+    assert row["reason"] == "给构建机 A" and row["actor"]
+    assert row["detail"]["team_id"] == "build"
+    assert row["detail"]["org_created"] is True and row["detail"]["team_created"] is True
+    assert plaintext not in str(row)
+
+    # 吊销：理由必填
+    assert client.post("/api/v1/identity/devices/dev-cli/revoke").status_code == 422
+    assert client.post("/api/v1/identity/devices/dev-cli/revoke", params={"reason": "  "}).status_code == 422
+    assert client.post("/api/v1/identity/devices/ghost/revoke", params={"reason": "x"}).status_code == 404
+    revoked = client.post("/api/v1/identity/devices/dev-cli/revoke", params={"reason": "员工离职"})
+    assert revoked.status_code == 200, revoked.text
+
+    audit = client.get("/api/v1/identity/audit", params={"target_type": "device", "target_id": "dev-cli"}).json()
+    rev = audit["items"][0]
+    assert rev["action"] == "device_revoke" and rev["reason"] == "员工离职"
+    assert rev["org_id"] == "default"
+    assert rev["detail"]["revoked_credentials"] == 1 and rev["detail"]["user_ref"] is not None
+
+
 def test_member_cannot_manage_org_team(client):
     _login_device(client, MEMBER_UNION)
     client.cookies.clear()

@@ -8,7 +8,7 @@
 
 本仓是 **Agent Backend**（企业级 Agent 后端）：sid-code 与 claude-trace 共同面对的服务端，控制面（policy / flag / 身份）与数据面（轨迹 / 事件）同仓部署、鉴权隔离。
 
-轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`），auth（管理台飞书登录与人员身份）是第七个（`modules/auth/`），feishu（委托授权：以员工本人飞书权限读文档）是第八个（`modules/feishu/`），marketplace（企业插件市场）是第九个（`modules/marketplace/`）。
+轨迹存储与分析是已经落地的**第一个模块**（`modules/trajectory/`），身份是第二个（`modules/identity/`），flag 是第三个（`modules/flag/`），policy 是第四个（`modules/policy/`），event 是第五个（`modules/event/`），cost 是第六个（`modules/cost/`），auth（管理台飞书登录与人员身份）是第七个（`modules/auth/`），feishu（委托授权：以员工本人飞书权限读文档）是第八个（`modules/feishu/`），marketplace（企业插件市场）是第九个（`modules/marketplace/`），bridge（遥控配对：管理台远程接管员工的 CLI 会话）是第十个（`modules/bridge/`，WebSocket 中继是独立进程）。
 
 GitHub 目标仓名 `njfuzrs/agent-backend`。生产路径 `/opt/trajectory-platform`、nginx 前缀 `/traj/`、unit 文件名 `trajectory-platform.service` **故意不改**（采集 URL 已对外冻结）。
 
@@ -89,11 +89,17 @@ agent-backend/
 │   │       │   ├── schemas.py
 │   │       │   ├── router/     # mcp（POST /ctl/feishu/mcp，远程 MCP）/ admin（/feishu/calls、/feishu/grants）
 │   │       │   └── service/    # crypto / tokens（落库 + 刷新锁）/ openapi（用户身份调飞书）/ tools / queries
-│   │       └── marketplace/    # 模块九：企业插件市场（P5）
-│   │           ├── model.py    # market_items / market_versions / market_downloads / market_audit
+│   │       ├── marketplace/    # 模块九：企业插件市场（P5）
+│   │       │   ├── model.py    # market_items / market_versions / market_downloads / market_audit
+│   │       │   ├── schemas.py
+│   │       │   ├── router/     # serve（GET /ctl/marketplace/index、/artifacts/{name}/{version}）/ admin（/marketplace/**）
+│   │       │   └── service/    # package（tar.gz 内存校验）/ catalog（上架 / 发布 / 下架 / 下发）
+│   │       └── bridge/         # 模块十：遥控配对（M6）
+│   │           ├── model.py    # bridge_sessions / bridge_session_tokens（只存 hash）/ bridge_audit
 │   │           ├── schemas.py
-│   │           ├── router/     # serve（GET /ctl/marketplace/index、/artifacts/{name}/{version}）/ admin（/marketplace/**）
-│   │           └── service/    # package（tar.gz 内存校验）/ catalog（上架 / 发布 / 下架 / 下发）
+│   │           ├── router/     # serve（POST /ctl/bridge/sessions、GET …/whoami）/ admin（/bridge/sessions/**：列表、签控制端 token、强制断开）
+│   │           ├── service/    # sessions（签发 / 重签 / 断开 / 列表）/ guard
+│   │           └── sidecar/    # 独立进程：main（FastAPI，WS /api/v1/bridge/ws + /health）/ relay（首帧鉴权、配对、转发）
 │   └── requirements.txt
 ├── frontend/               # React 前端
 │   ├── src/
@@ -110,12 +116,14 @@ agent-backend/
 │   │   ├── modules/auth/         # 用户列表（角色 / 吊销）+ 登录审计（/users）
 │   │   ├── modules/feishu/       # 飞书委托授权（/feishu）：授权状态（scope / 过期 / 快满 365 天）+ 调用审计（按人 / 设备 / 结果 / 时间筛）
 │   │   ├── modules/marketplace/  # 插件市场（/marketplace）：登记 / 上传 / 发布 / 下架、组件清单、下载统计、变更审计
+│   │   ├── modules/bridge/       # 遥控（/bridge）：在线 / 等待 / 已结束会话，签控制端 token、强制断开；设备页「遥控中」跳这里
 │   │   └── utils/          # 跨模块工具（format / chart / trajectoryDetail）
 │   └── vite.config.ts      # base: '/traj/'（冻结区，不要改）
 ├── data/                   # 数据目录（.gitignore）
 ├── deploy/                 # 部署配置与运维脚本
 │   ├── remote_setup.sh         # 一键部署脚本（首次装机入口）
 │   ├── trajectory-platform.service  # systemd unit（文件名故意不改）
+│   ├── agent-backend-bridge.service # 遥控中继 sidecar 的 unit 参考件（127.0.0.1:8901，--workers 1；不随发版覆盖，需手动安装）
 │   ├── nginx.conf              # Nginx 配置参考
 │   ├── pg_env.sh               # 被 source 的公共库：resolve_root / load_pg_from_env / psql_q / psql_v
 │   ├── migrate_to_pg.py        # SQLite → PG 数据迁移
@@ -151,7 +159,10 @@ agent-backend/
 - **委托授权（P4）**（`modules/feishu/`）：登录回调换到的 user_access_token / refresh_token 在配了 `TOKEN_ENC_KEY` 时用 MultiFernet 加密存进 `feishu_tokens`（没配就不存，`/ctl/feishu/mcp` 返回 503）。远程 MCP `POST /api/v1/ctl/feishu/mcp` 挂 `require_device`，按 `DeviceContext.user_ref` 取本人 token 调飞书，token 不出服务端；手写 JSON-RPC（initialize / ping / tools/list / tools/call），三个只读工具 `feishu_doc_read` / `feishu_doc_search` / `feishu_wiki_node`。刷新走进程锁 + PG `FOR UPDATE`，锁内二次检查 version，新 refresh_token 先 commit 再交出 access；refresh 失败删 token 行、提示重新 `sid-code login`，**绝不降级到 tenant_access_token**。每次调用写一行 `feishu_call_audit`（只记文档 token，不记内容和搜索词）。吊销用户同一事务删 token。门禁 ⑫：auth / feishu 的 logger 实参禁止引用 token 变量（AST），feishu 模块禁止出现 tenant / app access token
 - **插件市场（P5）**（`modules/marketplace/`）：管理台登记条目（org / 可选 team 可见）→ 上传 tar.gz（落 draft）→ 写理由发布；版本不可覆盖、不可删，下架（yank）是终态。上传在内存里校验，从不解包落盘：plugin.json 必须在包根，规则与客户端 `validateManifest` 同一份并要求 semver；`..` / 绝对路径 / 盘符 / 反斜杠 / 符号链接 / 硬链接 / 非普通文件一律 422；组件路径必须是包内相对路径且存在；有压缩包与解压后大小上限。设备端 `GET /ctl/marketplace/index`（ETag，按 semver 取 latest，含组件清单）与 `/artifacts/{name}/{version}` 都挂 `require_device`；看不见 / draft → 404（不区分），yanked → 410，存储里的制品哈希与登记不一致 → 500 不下发。每次下载写 `market_downloads`（user_ref 取自凭据）。`plugin_installed` 已进事件白名单。`strictKnownMarketplaces` 策略字段见下文「插件治理（P5）」。管理台「市场」页（`/marketplace`）：登记、拖拽上传包、展开看组件清单（hooks / MCP 地址单独标出）、写理由发布 / 下架、按人看下载、变更审计
 - **CI 上传凭据（P2′）**：`market_upload_tokens`（只存 sha256，带组织范围与过期，不滑动续期，吊销是终态）。形如 `mkt_…`，走 `Authorization: Bearer`，**只**能调 `POST /marketplace/items/{name}/versions` 上传 draft，且只能传到本组织的条目（跨组织 403）。其余 `/marketplace/**` 路由级先挂 `deny_upload_token`（有效机器凭据 → 403 并写 `market_token_audit` 的 denied 行；吊销 / 过期 → 401）再挂 `require_web_session`。签发 / 吊销 / 上传 / 越权都进 `market_token_audit`，上传同时进 `market_audit`（actor=`ci:<name>#<id>`）。由 `test_marketplace_admin_requires_web_session` 锁定只有上传端点能挂 `require_uploader`。策略白名单缺本企业市场（`PUBLIC_BASE_URL + /api/v1/ctl/marketplace/index`）时 `PolicyItem.warnings` 告警，不拒绝写入
-- **组织 / 团队与设备归属（D1）**：管理台「组织与团队」页（`/orgs`）新建 / 改名组织与团队（`/identity/organizations`、`/identity/teams`、`PATCH …/teams/{team_id}`），删除不做。org_id / team_id 是策略、预算、市场条目里的文本副本，建好后只能改展示名。设备页「调整归属」走 `POST /identity/devices/{device_id}/move`（团队必须在目标组织下，留空 = 不进团队），飞书登录的设备同样可改；不重签凭据，`require_device` 每次现查，下一次控制面请求即生效；再次 `sid-code login` 不改老设备的组织 / 团队。新建团队、改名、改归属都要理由，与业务同一事务写 `identity_audit`（只追加、无 FK、带 actor / request_id），`GET /identity/audit` 查询。注册码签发与吊销尚未进这张表（D5）。由 `tests/test_identity_org_team.py` 锁定
+- **组织 / 团队与设备归属（D1）**：管理台「组织与团队」页（`/orgs`）新建 / 改名组织与团队（`/identity/organizations`、`/identity/teams`、`PATCH …/teams/{team_id}`），删除不做。org_id / team_id 是策略、预算、市场条目里的文本副本，建好后只能改展示名。设备页「调整归属」走 `POST /identity/devices/{device_id}/move`（团队必须在目标组织下，留空 = 不进团队），飞书登录的设备同样可改；不重签凭据，`require_device` 每次现查，下一次控制面请求即生效；再次 `sid-code login` 不改老设备的组织 / 团队。新建团队、改名、改归属都要理由，与业务同一事务写 `identity_audit`（只追加、无 FK、带 actor / request_id），`GET /identity/audit` 查询。签发注册码（`enroll_code_issue`，target 是 `enroll_codes.id`，不记明文与 hash）与吊销设备（`device_revoke`，`POST …/revoke?reason=` 必填）同样进这张表（D5）；设备页每行「变更记录」、注册码区「签发记录」查看。由 `tests/test_identity_org_team.py` 锁定
+- **遥控配对（M6）**（`modules/bridge/`）：CLI 用设备凭据调 `POST /ctl/bridge/sessions`（挂 `require_device`，device / org / team 只取自 `DeviceContext`，同组织在线数有上限 429）拿到 session_id + cli token；管理员在「遥控」页（`/bridge`）对该 session 签控制端 token（`/bridge/sessions/{id}/controller-token`，cookie 会话，重签作废旧 token）、写理由强制断开。token 只存 sha256、按 (session, role) 一张。**WebSocket 中继是独立进程**（`sidecar/main.py`，`uvicorn … --workers 1`，只绑 127.0.0.1:8901，nginx 把 `/traj/api/v1/bridge/ws` 反代过去，unit 见 `deploy/agent-backend-bridge.service`）：配对表在进程内存，主进程 `--workers 2` 会让两端永远等不到对方，所以 WS 路由**不得** include 进 `app.main`（`test_bridge_ws_not_mounted_on_main_app`）。鉴权在首帧不在 URL，URL 带 `token=` 直接 close 4001；中继只鉴权 / 配对 / 转发，帧正文不入库。sidecar 每 2 秒轮询管理台的断开请求。`release.sh` 在主应用 health 通过后才重启中继，unit 没装就跳过、中继 health 失败只警告。签发响应里的 ws 地址取 `BRIDGE_WS_PUBLIC_URL`（生产必须配 `wss://<对外域名>/traj/api/v1/bridge/ws`）；非 local 存储下没配会让签发 500，不回落到回环地址。客户端是否允许被遥控还受策略 `bridgeEnabled` 约束（省略=不关，`false` 才关）。由 `tests/test_bridge.py` / `tests/test_bridge_relay.py` 锁定
+- **策略 / 预算按层只取一份（D3）**：`evaluate` 按 device > team > org 只取一份，不合并字段，这是设计。管理台为此补了提示：`GET /policies/evaluate` 与 `GET /budgets/evaluate` 除命中层外返回 `shadowed`（被整份遮蔽的上层）；`GET /policies/upper`、`GET /budgets/upper` 给新建弹窗用，列出在某层生效后会对这些设备失效的上层，弹窗顶部提示并可「从上层复制内容」。下发路径不变
+- **管理操作理由必填**：策略、预算、flag 的停用 / 启用 / 删除（query 参数 `reason`）、组织 / 团队改名、改归属、吊销设备都要理由，空或只含空白 422（flag 在 D6 补齐）。签发注册码的 `note` 即理由，接口层仍选填（老脚本不带），管理台必填
 - **身份落账（P3）**：`events.user_ref` / `usage_ledger.user_ref` 入库时从 `DeviceContext` 取（= 上报那一刻 `devices.user_ref` 的快照），body 里的同名字段一律忽略；未登录设备为 NULL。不建 FK、旧行不回填：设备换过人时历史仍记在当时的人头上。管理台按人看走 `GET /usage/ledger/stats/by-user`（默认 daily，NULL 合成「未登录」一行，合计与 by-scope 对齐）与列表的 `user_ref` 筛选。轨迹的 `user_id` 仍是自报（冻结的上传通道认不出人），是弱归因
 - **插件治理（P5）**：policy 新增 `strictKnownMarketplaces`（`[{source:"url", url}]`，https 或回环 http、无 userinfo/query/fragment、去尾斜杠、去重、≤32；省略=不限制，空数组=禁一切非内置插件，是约束不是空策略），客户端执行。按插件统计走新事件 `tool_invoked`（客户端只对企业市场插件上报，入库校验 `plugin_name` slug ≤64、`plugin_component ∈ {mcp, skill}`，坏的逐条 rejected）；`GET /events/stats/by-plugin?days=30&org_id=`（≤90 天、最多扫 5 万行并标 `truncated`）按 `plugin_name × user_ref` 聚合，metadata 在 Python 侧解析、不建索引。**不**给本后端开 `stripProtected:false`
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录

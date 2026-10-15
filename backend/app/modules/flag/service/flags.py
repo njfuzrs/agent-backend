@@ -155,9 +155,10 @@ async def set_flag_enabled(
     key: str,
     enabled: bool,
     actor: str,
-    reason: str = "",
+    reason: str,
 ) -> FlagItem:
-    """启用 / 停用。停用 = 不进下发 = 客户端按「远程已删除」回落默认值。"""
+    """启用 / 停用。停用 = 不进下发 = 客户端按「远程已删除」回落默认值。理由必填（D6）。"""
+    reason = _require_reason(reason)
     validate_key(key)
     flag = await _require(db, key)
     now_iso = utc_now_iso()
@@ -180,13 +181,15 @@ async def set_flag_enabled(
     return _to_item(flag)
 
 
-async def delete_flag(db: AsyncSession, key: str, actor: str, reason: str = "") -> FlagDeleteResponse:
+async def delete_flag(db: AsyncSession, key: str, actor: str, reason: str) -> FlagDeleteResponse:
     """真删。审计行留下（flag_id 走 SET NULL），key 文本副本保住「删了哪个」。
 
     为什么这里是真删而不是软删除：软删除已经由 `disabled_at` 承担了
     （「关掉但不删」是常态操作）。真删是「这个 flag 彻底不要了」，
     留一行 disabled 记录只会让 flag 列表越来越长。审计里有全过程，可追溯。
+    理由必填（D6）。
     """
+    reason = _require_reason(reason)
     validate_key(key)
     flag = await _require(db, key)
     now_iso = utc_now_iso()
@@ -207,6 +210,14 @@ async def delete_flag(db: AsyncSession, key: str, actor: str, reason: str = "") 
     await db.commit()
     _admin_write("delete", key)
     return FlagDeleteResponse(key=key, deleted=True)
+
+
+def _require_reason(reason: str) -> str:
+    """停用 / 启用 / 删除的理由必填，与策略、预算同一口径（D6）。只含空白也算空。"""
+    text = (reason or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="reason 必填（会进审计；空 flag 变更无法追溯）")
+    return text
 
 
 async def list_audit(db: AsyncSession, key: Optional[str] = None, limit: int = 100) -> FlagAuditListResponse:

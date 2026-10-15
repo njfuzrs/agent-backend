@@ -61,10 +61,16 @@ export type PolicyAuditItem = {
   created_at: string
 }
 
-export type PolicyEvaluate = {
+/** 一层生效策略的预览形状 */
+export type PolicyLayer = {
   layer: PolicyScopeType
   policy_id: number
   scope_id: string
   org_id: string
   settings: PolicySettings
+}
+
+/** 预览命中。shadowed = 被命中层整份遮蔽的上层（不合并字段，它们对该设备完全不生效） */
+export type PolicyEvaluate = PolicyLayer & {
+  shadowed: PolicyLayer[]
 }

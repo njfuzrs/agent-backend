@@ -237,7 +237,7 @@ def test_ingest_with_revoked_credential_is_401(client):
     cred = _enroll(client, code, "dev-revoke")
     assert _post(client, cred, _entry()).status_code == 200
     _login(client)
-    assert client.post("/api/v1/identity/devices/dev-revoke/revoke").status_code == 200
+    assert client.post("/api/v1/identity/devices/dev-revoke/revoke", params={"reason": "测试吊销"}).status_code == 200
     assert _post(client, cred, _entry("s-after-revoke")).status_code == 401
 
 
@@ -735,6 +735,16 @@ def test_evaluate_preview_reports_hit_layer(client):
     body = resp.json()
     assert body["layer"] == "team"
     assert body["limit_usd"] == pytest.approx(50.0)
+    # D3：组织层 500 的预算对它整份失效，预览里要看得见
+    assert [(s["layer"], s["limit_usd"]) for s in body["shadowed"]] == [("org", pytest.approx(500.0))]
+
+    up = client.get("/api/v1/budgets/upper", params={"scope_type": "device", "scope_id": "dev-eval"})
+    assert up.status_code == 200, up.text
+    assert [i["layer"] for i in up.json()["items"]] == ["team", "org"]
+    team_up = client.get(
+        "/api/v1/budgets/upper", params={"scope_type": "team", "scope_id": "infra", "org_id": "corp-shanghai"}
+    )
+    assert [i["layer"] for i in team_up.json()["items"]] == ["org"]
 
 
 # ---------------------------------------------------------------------------
