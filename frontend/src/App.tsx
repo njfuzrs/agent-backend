@@ -11,7 +11,6 @@ import {
   SafetyCertificateOutlined,
   AuditOutlined,
   AppstoreOutlined,
-  SettingOutlined,
   TeamOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons'
@@ -80,8 +79,6 @@ function ProtectedLayout() {
                 ? '/marketplace'
                 : location.pathname.startsWith('/feishu')
                 ? '/feishu'
-                : location.pathname.startsWith('/settings')
-                ? '/settings'
                 : '/'
 
   const handleLogout = async () => {
@@ -129,7 +126,6 @@ function ProtectedLayout() {
             { key: '/marketplace', icon: <AppstoreOutlined />, label: '市场' },
             { key: '/users', icon: <TeamOutlined />, label: '用户' },
             { key: '/feishu', icon: <KeyOutlined />, label: '飞书授权' },
-            { key: '/settings', icon: <SettingOutlined />, label: '设置' },
           ]}
           style={{ flex: 1 }}
         />
@@ -166,7 +162,6 @@ function App() {
         <Route path="/users" element={<UserList />} />
         <Route path="/marketplace" element={<MarketList />} />
         <Route path="/feishu" element={<FeishuDelegation />} />
-        <Route path="/settings" element={<div style={{ color: '#fff' }}>设置页（Phase 2）</div>} />
         <Route path="/compare" element={<Navigate to="/" replace />} />
         <Route path="/compare/:groupId" element={<Navigate to="/" replace />} />
       </Route>

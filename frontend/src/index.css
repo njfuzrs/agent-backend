@@ -17,10 +17,6 @@ body {
   min-height: 100vh;
 }
 
-.ant-layout-header {
-  background: #1f1f1f !important;
-}
-
 .ant-layout-content {
   overflow-x: auto;
 }

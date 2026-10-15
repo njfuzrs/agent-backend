@@ -25,6 +25,12 @@ createRoot(document.getElementById('root')!).render(
             colorPrimary: '#1668dc',
             borderRadius: 6,
           },
+          // 顶栏与暗色菜单必须同色：antd 默认 Header / dark Menu 都是 #001529（深蓝），
+          // 这里统一成 #1f1f1f，避免菜单区和两侧标题 / 登出区颜色不一致。
+          components: {
+            Layout: { headerBg: '#1f1f1f' },
+            Menu: { darkItemBg: '#1f1f1f', darkPopupBg: '#1f1f1f' },
+          },
         }}
       >
         <BrowserRouter basename="/traj">
