@@ -80,7 +80,7 @@ jobs:
       # test_lock_matches_requirements 要用 uv 重解析锁。不装它那条在 CI 上永远 SKIPPED；
       # 版本钉死，和本机生成锁的 uv 同版本，免得输出格式差异造成假红。
       - run: pip install uv==0.10.0
-      - run: python -m pytest tests/test_boundaries.py tests/test_auth_login.py tests/test_auth_cli.py tests/test_feishu_delegation.py tests/test_marketplace.py tests/test_identity_ledger.py tests/test_identity.py tests/test_flag.py tests/test_policy.py tests/test_event.py tests/test_event_plugin_usage.py tests/test_cost.py tests/test_deploy_scripts.py tests/test_logging.py tests/test_trajectory_exit_status.py -v
+      - run: python -m pytest tests/test_boundaries.py tests/test_auth_login.py tests/test_auth_cli.py tests/test_feishu_delegation.py tests/test_marketplace.py tests/test_identity_ledger.py tests/test_identity.py tests/test_flag.py tests/test_policy.py tests/test_event.py tests/test_event_plugin_usage.py tests/test_cost.py tests/test_deploy_scripts.py tests/test_logging.py tests/test_trajectory_exit_status.py tests/test_plugin_sources.py -v
         # test_boundaries 覆盖六条纪律（含 /ctl/flags 无认证豁免的两道补偿锁）+ events 三条门禁
         # test_auth_login 覆盖 P1 飞书登录：401/403、state 重放/过期/nonce 不匹配、拒绝授权、跨租户、吊销、口令开关
         # test_identity 覆盖 enroll / 吊销 / 明文不入库

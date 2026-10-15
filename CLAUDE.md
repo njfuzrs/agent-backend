@@ -130,7 +130,8 @@ agent-backend/
 │   ├── backup.sh               # ⚠️ 已废弃（SQLite 时代），执行即 exit 1 → 用 backup_pg.sh
 │   ├── setup.sh                # ⚠️ 已废弃（会建 traj_files/、给 backup.sh 装 cron）→ 用 remote_setup.sh
 │   └── rsync_sync.sh           # ⚠️ 已废弃（OSS 下 rsync+reindex 双空转）→ 用 claude-trace sync.py
-├── scripts/                # 服务侧运维脚本（现仅 backfill_sid_code.sh）
+├── plugins/                # 企业市场插件源码（现仅 feishu-docs）；门禁 tests/test_plugin_sources.py
+├── scripts/                # 服务侧运维脚本：backfill_sid_code.sh、plugin_publish.py（打包 + 用 mkt_ 凭据传 draft）
 └── tests/                  # test_boundaries.py 为门禁核心；其余 5 个脚本为手动验收工具
 ```
 
