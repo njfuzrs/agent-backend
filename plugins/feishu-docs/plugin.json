@@ -1,0 +1,14 @@
+{
+  "name": "feishu-docs",
+  "version": "1.0.1",
+  "description": "读取飞书云文档：以员工本人的飞书权限按链接或 token 读取正文并给出摘要",
+  "author": "e2e-lab",
+  "license": "MIT",
+  "mcpServers": {
+    "feishu": {
+      "transport": "http",
+      "url": "https://www.sid-code.cc/traj/api/v1/ctl/feishu/mcp",
+      "auth": "sid-backend"
+    }
+  }
+}
