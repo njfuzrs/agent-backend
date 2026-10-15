@@ -553,6 +553,40 @@ def test_admin_evaluate_shows_winning_layer(client):
     assert body["scope_id"] == "dev-eval"
     assert "policyLimits" not in body["settings"]
     assert body["settings"]["permissions"]["deny"] == ["Bash(curl *)"]
+    # D3：被整份遮蔽的上层也要列出来，管理台才看得见「组织层对它不生效了」
+    assert [(s["layer"], s["scope_id"]) for s in body["shadowed"]] == [("org", "corp-shanghai")]
+    assert "policyLimits" in body["shadowed"][0]["settings"]
+
+
+def test_upper_policies_lists_what_a_new_layer_would_shadow(client):
+    """D3：新建弹窗查「此层生效后哪些上层不再生效」。"""
+    code = _issue_code(client)
+    _enroll(client, code, "dev-up")
+    assert _create_policy(
+        client, scope_type="org", scope_id="corp-shanghai", org_id="corp-shanghai", settings=LIMIT_MCP
+    ).status_code == 201
+    assert _create_policy(
+        client, scope_type="team", scope_id="infra", org_id="corp-shanghai", settings=DENY_CURL
+    ).status_code == 201
+    _login(client)
+
+    dev = client.get("/api/v1/policies/upper", params={"scope_type": "device", "scope_id": "dev-up"})
+    assert dev.status_code == 200, dev.text
+    assert [(i["layer"], i["scope_id"]) for i in dev.json()["items"]] == [("team", "infra"), ("org", "corp-shanghai")]
+
+    team = client.get(
+        "/api/v1/policies/upper", params={"scope_type": "team", "scope_id": "infra", "org_id": "corp-shanghai"}
+    )
+    assert [i["layer"] for i in team.json()["items"]] == ["org"]
+
+    org = client.get(
+        "/api/v1/policies/upper",
+        params={"scope_type": "org", "scope_id": "corp-shanghai", "org_id": "corp-shanghai"},
+    )
+    assert org.json()["items"] == []
+    assert client.get(
+        "/api/v1/policies/upper", params={"scope_type": "device", "scope_id": "ghost"}
+    ).status_code == 404
 
 
 def test_device_org_id_overridden_by_real_org(client):

@@ -111,11 +111,22 @@ async def evaluate_budget(
     device_id: str = Query(..., min_length=1),
     db: AsyncSession = Depends(get_db),
 ):
-    """管理台预览该设备会命中哪一层。cookie 会话，**不是**客户端下发。"""
-    budget = await budget_service.evaluate_for_device(db, device_id)
-    if budget is None:
+    """管理台预览该设备会命中哪一层，以及被它遮蔽的上层。cookie 会话，**不是**客户端下发。"""
+    chain = await budget_service.layer_chain_for_device(db, device_id)
+    if not chain:
         return Response(status_code=204)
-    return await budget_service.to_evaluate_payload(db, budget)
+    return await budget_service.to_evaluate_payload(db, chain)
+
+
+@budget_router.get("/upper")
+async def upper_budgets(
+    scope_type: str = Query(..., pattern="^(device|team|org)$"),
+    scope_id: str = Query(..., min_length=1, max_length=128),
+    org_id: str = Query("", max_length=128),
+    db: AsyncSession = Depends(get_db),
+):
+    """新建弹窗用：在这一层生效后，哪些上层预算会对这些设备整份失效（D3）。"""
+    return {"items": await budget_service.upper_budgets(db, scope_type, scope_id.strip(), org_id.strip())}
 
 
 @budget_router.post("", response_model=BudgetItem, status_code=201)

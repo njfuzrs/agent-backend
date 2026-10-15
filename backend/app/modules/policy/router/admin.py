@@ -4,7 +4,7 @@
 require_device，浏览器没有设备凭据。放在 /ctl/ 下会被边界测试 ② 要求挂
 require_device，然后为了让浏览器能用又去豁免，等于把写端点也变成无认证。
 
-失败语义：写入 fail-closed。`reason` 空 → 422（flag 允许空 reason；policy 规划写明必填）。
+失败语义：写入 fail-closed。`reason` 空 → 422（与预算、flag 的停用 / 启用 / 删除同一口径）。
 未知字段 / 空策略 / 非法 feature → 422。同层第二条 enabled → 409。
 
 与 identity/router/admin.py 同一套形状：不 import 数据面符号，
@@ -62,11 +62,22 @@ async def evaluate_policy(
     device_id: str = Query(..., min_length=1),
     db: AsyncSession = Depends(get_db),
 ):
-    """管理台预览该设备会命中哪一层。cookie 会话，**不是**客户端下发。"""
-    policy = await policy_service.evaluate_for_device(db, device_id)
-    if policy is None:
+    """管理台预览该设备会命中哪一层，以及被它遮蔽的上层。cookie 会话，**不是**客户端下发。"""
+    chain = await policy_service.layer_chain_for_device(db, device_id)
+    if not chain:
         return Response(status_code=204)
-    return policy_service.to_evaluate_payload(policy)
+    return policy_service.to_evaluate_payload(chain)
+
+
+@router.get("/upper")
+async def upper_policies(
+    scope_type: str = Query(..., pattern="^(device|team|org)$"),
+    scope_id: str = Query(..., min_length=1, max_length=128),
+    org_id: str = Query("", max_length=128),
+    db: AsyncSession = Depends(get_db),
+):
+    """新建弹窗用：在这一层生效后，哪些上层生效策略会对这些设备整份失效（D3）。"""
+    return {"items": await policy_service.upper_policies(db, scope_type, scope_id.strip(), org_id.strip())}
 
 
 @router.post("", response_model=PolicyItem, status_code=201)

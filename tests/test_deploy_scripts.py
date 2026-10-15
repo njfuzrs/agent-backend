@@ -1070,6 +1070,8 @@ def test_nginx_bridge_location_upgrades_separately():
     assert "proxy_set_header X-Request-ID $request_id;" in api_block
     assert "proxy_hide_header X-Request-ID;" in api_block
     assert "add_header X-Request-ID $request_id always;" in api_block
+    # 有自己 add_header 的 location 不继承 server 级 HSTS，必须自带一份。
+    assert "add_header Strict-Transport-Security $hsts_header always;" in api_block
     # ready 只允许本机直连 8900。公网精确匹配必须盖住 /traj/api/ 前缀。
     assert "location = /traj/api/v1/ready" in text
     ready_block = text.split("location = /traj/api/v1/ready", 1)[1].split("location ", 1)[0]

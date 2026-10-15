@@ -4,6 +4,7 @@ import type {
   BudgetEnforcement,
   BudgetEvaluate,
   BudgetItem,
+  BudgetLayer,
   BudgetPeriod,
   BudgetScopeType,
   UsageByScopeResponse,
@@ -107,4 +108,14 @@ export async function evaluateDeviceBudget(deviceId: string): Promise<BudgetEval
   })
   if (status === 204) return null
   return data
+}
+
+/** 在这一层新建后，哪些上层预算会对这些设备整份失效（D3） */
+export async function fetchUpperBudgets(params: {
+  scope_type: string
+  scope_id: string
+  org_id?: string
+}): Promise<BudgetLayer[]> {
+  const { data } = await api.get('/budgets/upper', { params })
+  return data.items
 }

@@ -31,6 +31,7 @@ import {
   evaluateDeviceBudget,
   fetchBudgetAudit,
   fetchBudgets,
+  fetchUpperBudgets,
   fetchUsageByScope,
   fetchUsageByUser,
   fetchUsageLedger,
@@ -42,6 +43,7 @@ import type {
   BudgetEnforcement,
   BudgetEvaluate,
   BudgetItem,
+  BudgetLayer,
   BudgetPeriod,
   BudgetScopeType,
   UsageByScopeItem,
@@ -54,6 +56,8 @@ import { formatTokens } from '../../../utils/format'
 // 相除会得出「我们的单价比网关低一截」的假结论，然后有人去改计价。服务端不返回、
 // 这里不算、表格不渲染。命中率（cache_hit / prompt_total）是唯一允许的除法 ——
 // 分子分母都是主循环 token。
+
+const LAYER_LABEL: Record<BudgetScopeType, string> = { org: '组织', team: '团队', device: '设备' }
 
 const PERIODS: { value: BudgetPeriod; label: string }[] = [
   { value: 'monthly', label: '月' },
@@ -135,6 +139,26 @@ export default function CostOverview() {
 
   const [previewDeviceId, setPreviewDeviceId] = useState('')
   const [previewHit, setPreviewHit] = useState<BudgetEvaluate | null | 'empty'>(null)
+  // 新建时在 team / device 层：查会被这一层整份遮蔽的上层预算（D3）
+  const watchScopeType = Form.useWatch('scope_type', form) as BudgetScopeType | undefined
+  const watchScopeId = (Form.useWatch('scope_id', form) as string | undefined)?.trim() ?? ''
+  const watchOrgId = (Form.useWatch('org_id', form) as string | undefined)?.trim() ?? ''
+  const upperEnabled =
+    createOpen &&
+    editing === null &&
+    ((watchScopeType === 'device' && !!watchScopeId) ||
+      (watchScopeType === 'team' && !!watchScopeId && !!watchOrgId))
+  const { data: uppers } = useQuery({
+    queryKey: ['budget-upper', watchScopeType, watchScopeId, watchOrgId],
+    queryFn: () => fetchUpperBudgets({ scope_type: watchScopeType!, scope_id: watchScopeId, org_id: watchOrgId }),
+    enabled: upperEnabled,
+    retry: false,
+  })
+  const layerName = (l: BudgetLayer) => `${LAYER_LABEL[l.layer]} ${l.scope_id}`
+  const copyFromUpper = (l: BudgetLayer) => {
+    form.setFieldsValue({ period: l.period, limit_usd: l.limit_usd, enforcement: l.enforcement })
+    message.success(`已复制 ${layerName(l)} 的周期 / 上限 / 处置方式，按需改动后保存`)
+  }
 
   const { data: orgs } = useQuery({
     queryKey: ['identity-organizations'],
@@ -939,6 +963,27 @@ export default function CostOverview() {
             </Typography.Text>
           )}
         </Space>
+        {previewHit && previewHit !== 'empty' && previewHit.shadowed?.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="被遮蔽的上层预算（对这台设备整份不生效，不叠加）"
+            description={
+              <Space direction="vertical" size={2}>
+                {previewHit.shadowed.map(l => (
+                  <span key={l.budget_id}>
+                    <Tag>{l.layer}</Tag>
+                    <Typography.Text code>{l.scope_id}</Typography.Text>
+                    {' · '}
+                    {l.period} · {money(l.used_usd)} / {money(l.limit_usd)} ·{' '}
+                    {l.enforcement === 'block' ? '硬拦' : '告警放行'}
+                  </span>
+                ))}
+              </Space>
+            }
+          />
+        )}
       </Card>
 
       <Modal
@@ -951,6 +996,26 @@ export default function CostOverview() {
         width={560}
       >
         <Form form={form} layout="vertical" onFinish={submitForm}>
+          {upperEnabled && (uppers?.length ?? 0) > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={`此层生效后，上层 ${uppers!.map(layerName).join('、')} 对这些设备不再生效`}
+              description={
+                <Space direction="vertical" size={4}>
+                  <span>预算按 device &gt; team &gt; org 只取一份，不叠加。</span>
+                  <Space wrap>
+                    {uppers!.map(l => (
+                      <Button key={l.budget_id} size="small" onClick={() => copyFromUpper(l)}>
+                        从{layerName(l)}复制内容
+                      </Button>
+                    ))}
+                  </Space>
+                </Space>
+              }
+            />
+          )}
           <Form.Item name="scope_type" label="层" rules={[{ required: true }]}>
             <Select
               disabled={editing !== null}

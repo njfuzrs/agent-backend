@@ -977,7 +977,7 @@ def _mismatched_events(path, text: str, logger_name: str, expected_event: str) -
 # ---------------------------------------------------------------------------
 # /api/v1/auth/** 下不挂任何会话依赖的端点。加一条就要写清「为什么还没登录也能调」。
 AUTH_PUBLIC_ROUTES = {
-    # 登录页决定显示哪些按钮。只返回两个布尔，不含配置值。
+    # 前端（登录页 / 设备页）决定显示哪些入口。只返回布尔开关，不含配置值。
     ("GET", "/api/v1/auth/options"),
     # 口令应急登录。关闭开关后 404。成功写 break_glass 审计。
     ("POST", "/api/v1/auth/login"),

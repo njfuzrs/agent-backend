@@ -276,7 +276,23 @@ def test_feishu_disabled_returns_503(client, monkeypatch):
 
     monkeypatch.setattr(settings.login, "FEISHU_APP_SECRET", "")
     assert client.get("/api/v1/auth/feishu/start", follow_redirects=False).status_code == 503
-    assert client.get("/api/v1/auth/options").json() == {"feishu_enabled": False, "password_enabled": True}
+    assert client.get("/api/v1/auth/options").json() == {
+        "feishu_enabled": False,
+        "password_enabled": True,
+        # 注册端点开关随部署配置（本地 .env 与 CI 环境不同）：断言跟随 settings，不写死
+        "enroll_enabled": settings.control_plane.CTL_ENROLL_ENABLED,
+    }
+
+
+def test_options_reports_enroll_enabled(client, monkeypatch):
+    """D2：设备页据此把「签发注册码」置灰——开关关闭时签出的码换不到凭据。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings.control_plane, "CTL_ENROLL_ENABLED", False)
+    assert client.get("/api/v1/auth/options").json()["enroll_enabled"] is False
+
+    monkeypatch.setattr(settings.control_plane, "CTL_ENROLL_ENABLED", True)
+    assert client.get("/api/v1/auth/options").json()["enroll_enabled"] is True
 
 
 # ---------------------------------------------------------------------------

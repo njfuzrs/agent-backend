@@ -173,7 +173,22 @@ def test_disable_removes_key_from_delivery(client):
     assert "content_tracing" in keys
 
     # 重新启用后又出现
-    assert client.post("/api/v1/flags/content_tracing/enable").status_code == 200
+    assert client.post("/api/v1/flags/content_tracing/enable", params={"reason": "重新灰度"}).status_code == 200
+    assert "content_tracing" in client.get("/api/v1/ctl/flags").json()
+
+
+def test_disable_enable_delete_require_reason(client):
+    """D6：flag 停用 / 启用 / 删除的理由与策略、预算一样必填；只含空白也拒。"""
+    _login(client)
+    _create(client, "content_tracing", True)
+    for method, path in [
+        ("POST", "/api/v1/flags/content_tracing/disable"),
+        ("POST", "/api/v1/flags/content_tracing/enable"),
+        ("DELETE", "/api/v1/flags/content_tracing"),
+    ]:
+        assert client.request(method, path).status_code == 422, path
+        assert client.request(method, path, params={"reason": "   "}).status_code == 422, path
+    # 都没生效：仍在下发
     assert "content_tracing" in client.get("/api/v1/ctl/flags").json()
 
 

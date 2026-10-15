@@ -27,7 +27,7 @@ export async function updateFlag(
   return data
 }
 
-export async function setFlagEnabled(key: string, enabled: boolean, reason = ''): Promise<FlagItem> {
+export async function setFlagEnabled(key: string, enabled: boolean, reason: string): Promise<FlagItem> {
   const action = enabled ? 'enable' : 'disable'
   const { data } = await api.post(`/flags/${encodeURIComponent(key)}/${action}`, null, {
     params: { reason },
@@ -35,7 +35,7 @@ export async function setFlagEnabled(key: string, enabled: boolean, reason = '')
   return data
 }
 
-export async function deleteFlag(key: string, reason = ''): Promise<{ key: string; deleted: boolean }> {
+export async function deleteFlag(key: string, reason: string): Promise<{ key: string; deleted: boolean }> {
   const { data } = await api.delete(`/flags/${encodeURIComponent(key)}`, { params: { reason } })
   return data
 }
