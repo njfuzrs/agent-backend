@@ -29,6 +29,7 @@
        auth / feishu 模块的日志调用不得引用 token 变量；feishu 模块不得出现 tenant_access_token
     ⑬ 插件市场（P5）：/ctl/marketplace/** 挂 require_device、只读、不在豁免名单；
        /marketplace/** 挂 cookie；包校验只在内存里读，不得调用 tar 解包落盘
+    ⑭ 生产配置（PG）下 /docs、/redoc、/openapi.json 都 404（D11）
 """
 
 import ast
@@ -1263,6 +1264,59 @@ def test_tar_extract_scan_catches_violation(tmp_path):
     good = tmp_path / "good.py"
     good.write_text("tar.extractfile(member).read()\n", encoding="utf-8")
     assert _tar_extract_calls(good) == []
+
+
+# ---------------------------------------------------------------------------
+# ⑭ 生产配置下不挂 FastAPI 接口文档（D11）
+# ---------------------------------------------------------------------------
+API_DOC_PATHS = ("/docs", "/redoc", "/openapi.json")
+
+# 子进程里按给定环境重新 import app.main，只用 TestClient 发请求、不进 lifespan
+# （不连库），打印三个地址的状态码。必须用子进程：settings / app 是模块级单例，
+# 同进程里改环境变量不会让已 import 的 app 重建。
+_DOCS_PROBE = """
+import json, sys
+sys.path.insert(0, {backend!r})
+from fastapi.testclient import TestClient
+from app.main import app
+client = TestClient(app)
+print(json.dumps({{p: client.get(p).status_code for p in {paths!r}}}))
+"""
+
+
+def _probe_api_docs(**env_overrides: str) -> dict[str, int]:
+    import json
+    import os
+    import subprocess
+
+    env = {**os.environ, "AUTH_PASSWORD": "x", "UPLOAD_TOKEN": "x"}
+    env.pop("API_DOCS_ENABLED", None)
+    env.update(env_overrides)
+    code = _DOCS_PROBE.format(backend=str(BACKEND_DIR), paths=API_DOC_PATHS)
+    out = subprocess.run(
+        [sys.executable, "-c", code], env=env, cwd=str(BACKEND_DIR),
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+PG_URL = "postgresql+asyncpg://u:p@127.0.0.1:1/never_connected"
+
+
+def test_api_docs_hidden_under_production_config():
+    """生产（PG）默认三个地址都 404，不靠 Nginx 只反代 /traj/api/ 碰巧挡住。"""
+    status = _probe_api_docs(DATABASE_URL=PG_URL)
+    assert status == {p: 404 for p in API_DOC_PATHS}, status
+
+
+def test_api_docs_explicit_setting_wins():
+    """显式配置优先：生产里写 true 才会开；本地 SQLite 写 false 也能关。"""
+    assert _probe_api_docs(DATABASE_URL=PG_URL, API_DOCS_ENABLED="true")["/openapi.json"] == 200
+    sqlite_url = "sqlite+aiosqlite:///:memory:"
+    assert _probe_api_docs(DATABASE_URL=sqlite_url)["/openapi.json"] == 200
+    off = _probe_api_docs(DATABASE_URL=sqlite_url, API_DOCS_ENABLED="false")
+    assert off == {p: 404 for p in API_DOC_PATHS}, off
 
 
 if __name__ == "__main__":

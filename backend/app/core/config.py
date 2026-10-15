@@ -14,6 +14,7 @@
 """
 
 from pathlib import Path
+from typing import Optional
 
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -171,6 +172,11 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
+    # FastAPI 自带的 /docs、/redoc、/openapi.json 是否开放（D11）。
+    # 留空 = 随数据库：SQLite（本地开发）开，其余（生产 PG）关。显式设置优先。
+    # 生产不要靠 Nginx 只反代 /traj/api/ 碰巧挡住，后端自己就不挂这三个地址。
+    API_DOCS_ENABLED: Optional[bool] = None
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._data_plane = DataPlaneSettings()
@@ -210,6 +216,13 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.DATABASE_URL.startswith("sqlite")
+
+    @property
+    def api_docs_enabled(self) -> bool:
+        """显式配置优先；没配时只在 SQLite 本地模式开放接口文档。"""
+        if self.API_DOCS_ENABLED is not None:
+            return self.API_DOCS_ENABLED
+        return self.is_sqlite
 
 
 def _build_settings() -> Settings:

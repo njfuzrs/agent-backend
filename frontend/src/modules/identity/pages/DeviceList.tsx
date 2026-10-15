@@ -28,6 +28,7 @@ import {
   revokeDevice,
 } from '../services/api'
 import type { DeviceListItem, EnrollCodeItem } from '../types/identity'
+import EffectiveConfigDrawer from '../components/EffectiveConfigDrawer'
 
 function formatTs(value: string | null | undefined) {
   return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '—'
@@ -47,6 +48,8 @@ export default function DeviceList() {
   const [moving, setMoving] = useState<DeviceListItem | null>(null)
   const [moveForm] = Form.useForm()
   const moveOrgId = Form.useWatch('org_id', moveForm) as string | undefined
+  // 正在查看「生效配置」的设备；null = 抽屉关闭（D10）
+  const [inspecting, setInspecting] = useState<DeviceListItem | null>(null)
 
   const { data: orgs } = useQuery({
     queryKey: ['identity-orgs'],
@@ -196,9 +199,12 @@ export default function DeviceList() {
     {
       title: '操作',
       key: 'action',
-      width: 340,
+      width: 410,
       render: (_value, record) => (
         <Space size="small">
+          <Button type="link" style={{ padding: 0 }} onClick={() => setInspecting(record)}>
+            生效配置
+          </Button>
           <Button type="link" style={{ padding: 0 }} onClick={() => openMove(record)}>
             调整归属
           </Button>
@@ -303,6 +309,8 @@ export default function DeviceList() {
           size="small"
         />
       </Card>
+
+      <EffectiveConfigDrawer device={inspecting} onClose={() => setInspecting(null)} />
 
       <Modal
         title="调整设备归属"
