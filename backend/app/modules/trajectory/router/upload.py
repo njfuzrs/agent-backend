@@ -91,18 +91,21 @@ async def upload_session_file(
     else:
         storage_key = f"sessions/{session_id}/{filename}"
 
-    # 去重：文件已存在则跳过（除非 force）
-    if storage.exists(storage_key) and not force:
+    # 去重（除非 force）。traj 以 DB 行为准，不以 OSS 文件为准：
+    # 上传是「先存 OSS 再写 DB」，DB 写失败时 OSS 已有文件。若按 OSS 判重，
+    # 客户端重试会拿到 409 并当作已上传，这条会话就永远成了孤儿
+    # （2026-10 NUL 字符事故留下 11 个）。按 DB 判重，重试会把孤儿补进库。
+    if not force:
         if file_type == "traj":
-            raise HTTPException(status_code=409, detail="trajectory already exists",
-                                headers={"X-Session-Id": session_id})
-        return {"session_id": session_id, "file_type": file_type, "status": "skipped",
-                "reason": "already exists", "sha256": server_hash}
+            row = await db.execute(select(Trajectory.id).where(Trajectory.session_id == session_id))
+            if row.scalar_one_or_none() is not None:
+                raise HTTPException(status_code=409, detail="trajectory already exists",
+                                    headers={"X-Session-Id": session_id})
+        elif storage.exists(storage_key):
+            return {"session_id": session_id, "file_type": file_type, "status": "skipped",
+                    "reason": "already exists", "sha256": server_hash}
 
-    # 存储文件
-    storage.put(storage_key, content)
-
-    # traj 类型需要解析元数据并写入/更新 DB
+    # traj 先解析再存：解析失败回 400 时不在 OSS 留下没有 DB 行的文件。
     if file_type == "traj":
         try:
             raw_content = gzip.decompress(content) if compressed else content
@@ -111,6 +114,11 @@ async def upload_session_file(
         except (json.JSONDecodeError, KeyError) as e:
             raise HTTPException(status_code=400, detail=f"无效的 .traj 文件: {e}") from e
 
+    # 存储文件
+    storage.put(storage_key, content)
+
+    # traj 类型需要写入/更新 DB
+    if file_type == "traj":
         parsed["session_id"] = session_id
         parsed["traj_file_path"] = storage_key
         parsed["oss_key"] = storage_key if settings.is_oss else None
