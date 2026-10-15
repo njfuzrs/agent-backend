@@ -88,10 +88,16 @@ async def lifespan(app: FastAPI):  # noqa: ARG001 — FastAPI 要求这个签名
         logger.info("shutting down", event="shutdown")
 
 
+_docs_enabled = settings.api_docs_enabled
 app = FastAPI(
     title="企业级 Agent 后端 API",
     version="1.0.0",
     lifespan=lifespan,
+    # D11：生产（PG）默认不挂接口文档，三个地址都返回 404。
+    # 不能只关 /docs：openapi.json 本身就是全量路由清单。
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 # CORS 在最外层：请求先过它再生成编号，这样 4xx 的预检也带得上 X-Request-ID。

@@ -164,6 +164,8 @@ agent-backend/
 - **策略 / 预算按层只取一份（D3）**：`evaluate` 按 device > team > org 只取一份，不合并字段，这是设计。管理台为此补了提示：`GET /policies/evaluate` 与 `GET /budgets/evaluate` 除命中层外返回 `shadowed`（被整份遮蔽的上层）；`GET /policies/upper`、`GET /budgets/upper` 给新建弹窗用，列出在某层生效后会对这些设备失效的上层，弹窗顶部提示并可「从上层复制内容」。下发路径不变
 - **管理操作理由必填**：策略、预算、flag 的停用 / 启用 / 删除（query 参数 `reason`）、组织 / 团队改名、改归属、吊销设备都要理由，空或只含空白 422（flag 在 D6 补齐）。签发注册码的 `note` 即理由，接口层仍选填（老脚本不带），管理台必填
 - **身份落账（P3）**：`events.user_ref` / `usage_ledger.user_ref` 入库时从 `DeviceContext` 取（= 上报那一刻 `devices.user_ref` 的快照），body 里的同名字段一律忽略；未登录设备为 NULL。不建 FK、旧行不回填：设备换过人时历史仍记在当时的人头上。管理台按人看走 `GET /usage/ledger/stats/by-user`（默认 daily，NULL 合成「未登录」一行，合计与 by-scope 对齐）与列表的 `user_ref` 筛选。轨迹的 `user_id` 仍是自报（冻结的上传通道认不出人），是弱归因
+- **设备「生效配置」抽屉（D10）**：设备页每行「生效配置」只读汇总策略命中层与内容、预算命中层与本周期 used / limit、下发中的全局 flag、最近一次 `policy_enforced` 事件。纯前端（`identity/components/EffectiveConfigDrawer.tsx`），只复用 `/policies/evaluate`、`/budgets/evaluate`、`/flags`、`/events`，不新增后端端点
+- **接口文档开关（D11）**：`API_DOCS_ENABLED` 留空时随数据库，SQLite 开、PG 关；显式设置优先。关闭时 `/docs`、`/redoc`、`/openapi.json` 都 404，不靠 Nginx 只反代 `/traj/api/` 碰巧挡住。由 `test_boundaries.py` 的 `test_api_docs_*` 锁定
 - **插件治理（P5）**：policy 新增 `strictKnownMarketplaces`（`[{source:"url", url}]`，https 或回环 http、无 userinfo/query/fragment、去尾斜杠、去重、≤32；省略=不限制，空数组=禁一切非内置插件，是约束不是空策略），客户端执行。按插件统计走新事件 `tool_invoked`（客户端只对企业市场插件上报，入库校验 `plugin_name` slug ≤64、`plugin_component ∈ {mcp, skill}`，坏的逐条 rejected）；`GET /events/stats/by-plugin?days=30&org_id=`（≤90 天、最多扫 5 万行并标 `truncated`）按 `plugin_name × user_ref` 聚合，metadata 在 Python 侧解析、不建索引。**不**给本后端开 `stripProtected:false`
 - **软删除**：DELETE 接口设置 `deleted_at` 时间戳，所有查询自动过滤 `deleted_at IS NULL`，30 天后由 cron 任务真正清理对象存储文件和 DB 记录
 - **上传校验**：客户端可传 `X-Content-SHA256` 头，服务端计算并比对，不一致返回 400

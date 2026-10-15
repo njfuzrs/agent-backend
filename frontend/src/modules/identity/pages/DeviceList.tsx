@@ -30,6 +30,7 @@ import {
   revokeDevice,
 } from '../services/api'
 import type { DeviceListItem, EnrollCodeItem } from '../types/identity'
+import EffectiveConfigDrawer from '../components/EffectiveConfigDrawer'
 import { identityAuditColumns } from '../auditFormat'
 
 function formatTs(value: string | null | undefined) {
@@ -50,6 +51,8 @@ export default function DeviceList() {
   const [moving, setMoving] = useState<DeviceListItem | null>(null)
   const [moveForm] = Form.useForm()
   const moveOrgId = Form.useWatch('org_id', moveForm) as string | undefined
+  // 正在查看「生效配置」的设备；null = 抽屉关闭（D10）
+  const [inspecting, setInspecting] = useState<DeviceListItem | null>(null)
   // 正在吊销的设备；吊销理由必填，写进 identity_audit
   const [revoking, setRevoking] = useState<DeviceListItem | null>(null)
   const [revokeForm] = Form.useForm()
@@ -232,9 +235,13 @@ export default function DeviceList() {
     {
       title: '操作',
       key: 'action',
-      width: 420,
+      // 合并后 7 个按钮（生效配置 + 调整归属 + 轨迹 + 审计 + 成本 + 变更记录 + 吊销），比任一侧都多
+      width: 470,
       render: (_value, record) => (
         <Space size="small">
+          <Button type="link" style={{ padding: 0 }} onClick={() => setInspecting(record)}>
+            生效配置
+          </Button>
           <Button type="link" style={{ padding: 0 }} onClick={() => openMove(record)}>
             调整归属
           </Button>
@@ -368,6 +375,8 @@ export default function DeviceList() {
           size="small"
         />
       </Card>
+
+      <EffectiveConfigDrawer device={inspecting} onClose={() => setInspecting(null)} />
 
       <Modal
         title="吊销设备"
