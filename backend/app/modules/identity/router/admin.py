@@ -13,13 +13,21 @@ from app.core.auth.session import require_web_session
 from app.core.db import get_db
 from app.modules.identity.schemas import (
     DeviceListResponse,
+    DeviceMove,
+    DeviceMoveResponse,
     EnrollCodeCreate,
     EnrollCodeCreated,
     EnrollCodeListResponse,
+    IdentityAuditListResponse,
     OrganizationCreate,
     OrganizationItem,
     OrganizationListResponse,
+    OrganizationRename,
     RevokeResponse,
+    TeamCreate,
+    TeamItem,
+    TeamListResponse,
+    TeamRename,
 )
 from app.modules.identity.service import admin as admin_service
 
@@ -41,6 +49,54 @@ async def create_organization(
     db: AsyncSession = Depends(get_db),
 ):
     return await admin_service.create_organization(db, payload)
+
+
+@router.patch("/organizations/{org_id}", response_model=OrganizationItem)
+async def rename_organization(
+    org_id: str,
+    payload: OrganizationRename,
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_service.rename_organization(db, org_id, payload)
+
+
+@router.get("/teams", response_model=TeamListResponse)
+async def list_teams(
+    org_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_service.list_teams(db, org_id=org_id)
+
+
+@router.post("/teams", response_model=TeamItem, status_code=201)
+async def create_team(
+    payload: TeamCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_service.create_team(db, payload)
+
+
+@router.patch("/organizations/{org_id}/teams/{team_id}", response_model=TeamItem)
+async def rename_team(
+    org_id: str,
+    team_id: str,
+    payload: TeamRename,
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_service.rename_team(db, org_id, team_id, payload)
+
+
+@router.get("/audit", response_model=IdentityAuditListResponse)
+async def list_audit(
+    target_type: Optional[str] = Query(None, pattern="^(org|team|device)$"),
+    target_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+    limit: int = Query(200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_service.list_audit(
+        db, target_type=target_type, target_id=target_id, org_id=org_id, limit=limit
+    )
 
 
 @router.get("/enroll-codes", response_model=EnrollCodeListResponse)
@@ -76,3 +132,13 @@ async def revoke_device(
     db: AsyncSession = Depends(get_db),
 ):
     return await admin_service.revoke_device(db, device_id)
+
+
+@router.post("/devices/{device_id}/move", response_model=DeviceMoveResponse)
+async def move_device(
+    device_id: str,
+    payload: DeviceMove,
+    db: AsyncSession = Depends(get_db),
+):
+    """调整设备的组织 / 团队。下一次控制面请求的 DeviceContext 即为新值。"""
+    return await admin_service.move_device(db, device_id, payload)

@@ -8,6 +8,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Table,
   Tag,
@@ -21,6 +22,9 @@ import {
   createEnrollCode,
   fetchDevices,
   fetchEnrollCodes,
+  fetchOrganizations,
+  fetchTeams,
+  moveDevice,
   revokeDevice,
 } from '../services/api'
 import type { DeviceListItem, EnrollCodeItem } from '../types/identity'
@@ -39,6 +43,46 @@ export default function DeviceList() {
   const [createOpen, setCreateOpen] = useState(false)
   const [issuedCode, setIssuedCode] = useState<string | null>(null)
   const [form] = Form.useForm()
+  // 正在调整归属的设备；null = 弹窗关闭
+  const [moving, setMoving] = useState<DeviceListItem | null>(null)
+  const [moveForm] = Form.useForm()
+  const moveOrgId = Form.useWatch('org_id', moveForm) as string | undefined
+
+  const { data: orgs } = useQuery({
+    queryKey: ['identity-orgs'],
+    queryFn: fetchOrganizations,
+    enabled: moving !== null,
+  })
+  const { data: moveTeams, isFetching: moveTeamsLoading } = useQuery({
+    queryKey: ['identity-teams', moveOrgId],
+    queryFn: () => fetchTeams(moveOrgId),
+    enabled: moving !== null && !!moveOrgId,
+  })
+
+  const moveMutation = useMutation({
+    mutationFn: (values: { org_id: string; team_id?: string; reason: string }) =>
+      moveDevice(moving!.device_id, { ...values, team_id: values.team_id || null }),
+    onSuccess: async result => {
+      message.success(result.changed ? '已调整，设备下一次请求控制面即生效' : '归属没有变化')
+      setMoving(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['identity-devices'] }),
+        queryClient.invalidateQueries({ queryKey: ['identity-teams'] }),
+        queryClient.invalidateQueries({ queryKey: ['identity-orgs'] }),
+        queryClient.invalidateQueries({ queryKey: ['identity-audit'] }),
+      ])
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      message.error(typeof detail === 'string' ? detail : '调整归属失败')
+    },
+  })
+
+  const openMove = (record: DeviceListItem) => {
+    moveForm.resetFields()
+    moveForm.setFieldsValue({ org_id: record.org_id, team_id: record.team_id || undefined })
+    setMoving(record)
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['identity-devices', page, pageSize, deviceFromUrl],
@@ -152,9 +196,12 @@ export default function DeviceList() {
     {
       title: '操作',
       key: 'action',
-      width: 280,
+      width: 340,
       render: (_value, record) => (
         <Space size="small">
+          <Button type="link" style={{ padding: 0 }} onClick={() => openMove(record)}>
+            调整归属
+          </Button>
           <Button
             type="link"
             style={{ padding: 0 }}
@@ -256,6 +303,44 @@ export default function DeviceList() {
           size="small"
         />
       </Card>
+
+      <Modal
+        title="调整设备归属"
+        open={moving !== null}
+        onCancel={() => setMoving(null)}
+        onOk={async () => {
+          const values = await moveForm.validateFields()
+          await moveMutation.mutateAsync(values)
+        }}
+        confirmLoading={moveMutation.isPending}
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          设备：<code>{moving?.device_id}</code>。凭据不重签，设备下一次请求控制面就按新的组织 / 团队命中策略与预算；
+          重新 <code>sid-code login</code> 也会保留这里的设置。团队到「组织与团队」页新建。
+        </Typography.Paragraph>
+        <Form form={moveForm} layout="vertical">
+          <Form.Item name="org_id" label="组织" rules={[{ required: true, message: '必选' }]}>
+            <Select
+              showSearch
+              options={(orgs || []).map(o => ({ value: o.org_id, label: `${o.org_id}（${o.name}）` }))}
+              onChange={() => moveForm.setFieldsValue({ team_id: undefined })}
+            />
+          </Form.Item>
+          <Form.Item name="team_id" label="团队" extra="留空 = 只挂在组织上，不进任何团队">
+            <Select
+              allowClear
+              showSearch
+              loading={moveTeamsLoading}
+              placeholder="不进团队"
+              options={(moveTeams || []).map(t => ({ value: t.team_id, label: `${t.team_id}（${t.name}）` }))}
+            />
+          </Form.Item>
+          <Form.Item name="reason" label="理由" rules={[{ required: true, whitespace: true, message: '必填' }]}>
+            <Input.TextArea rows={2} placeholder="写进审计" />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title="签发一次性注册码"

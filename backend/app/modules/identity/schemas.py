@@ -36,6 +36,8 @@ class WhoAmIResponse(BaseModel):
 class OrganizationCreate(BaseModel):
     org_id: str = Field(..., min_length=1, max_length=128)
     name: str = Field("", max_length=256)
+    # 选填：老调用方（脚本、测试）不带理由也能建组织；管理台页面会要求填写。
+    reason: str = Field("", max_length=512)
 
 
 class OrganizationItem(BaseModel):
@@ -47,6 +49,71 @@ class OrganizationItem(BaseModel):
 
 class OrganizationListResponse(BaseModel):
     items: list[OrganizationItem]
+
+
+class OrganizationRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=256)
+    reason: str = Field(..., min_length=1, max_length=512)
+
+
+# 新建团队的 slug 规则。老接口（注册码顺带建团队）不收紧，避免打断已在用的调用方。
+SLUG_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+
+
+class TeamCreate(BaseModel):
+    org_id: str = Field(..., min_length=1, max_length=128)
+    team_id: str = Field(..., min_length=1, max_length=128, pattern=SLUG_PATTERN)
+    name: str = Field("", max_length=256)
+    reason: str = Field(..., min_length=1, max_length=512)
+
+
+class TeamRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=256)
+    reason: str = Field(..., min_length=1, max_length=512)
+
+
+class TeamItem(BaseModel):
+    org_id: str
+    team_id: str
+    name: str
+    created_at: str
+    device_count: int = 0
+
+
+class TeamListResponse(BaseModel):
+    items: list[TeamItem]
+
+
+class DeviceMove(BaseModel):
+    """调整设备归属。team_id 为空 = 只挂在组织上，不进任何团队。"""
+
+    org_id: str = Field(..., min_length=1, max_length=128)
+    team_id: Optional[str] = Field(None, max_length=128)
+    reason: str = Field(..., min_length=1, max_length=512)
+
+
+class DeviceMoveResponse(BaseModel):
+    device_id: str
+    org_id: str
+    team_id: str = ""
+    changed: bool
+
+
+class IdentityAuditItem(BaseModel):
+    id: int
+    action: str
+    target_type: str
+    target_id: str
+    org_id: str
+    detail: dict
+    reason: str
+    actor: str
+    created_at: str
+    request_id: Optional[str] = None
+
+
+class IdentityAuditListResponse(BaseModel):
+    items: list[IdentityAuditItem]
 
 
 class EnrollCodeCreate(BaseModel):
