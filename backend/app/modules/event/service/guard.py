@@ -34,6 +34,9 @@ TRUNCATED_FLAG = "_truncated"
 # 代价：客户端加新事件时这里要同步，否则新事件被静默丢。对策是 rejected 落
 # event_rejects 表 + logger.warning 带上名字。**不要**做成「自动学习新名字」——
 # 那等于没有白名单。
+#
+# 两仓对齐由 tests/test_event_names_contract.py 拦：本集合必须与 sid-code 生成的
+# tests/fixtures/sid-code-event-names.json **完全相等**（多一个少一个都红）。
 ALLOWED_EVENT_NAMES = frozenset(
     {
         "tool_call",
@@ -49,6 +52,9 @@ ALLOWED_EVENT_NAMES = frozenset(
         "error_occurred",
         "memory_index_health",
         "memory_inject",
+        # memory_inject 的分子：Read 工具成功读到记忆文件时发（客户端 tool/read.ts）。
+        # 客户端补了生产者后这里漏同步，上线后一直被记为 unknown_event_name。
+        "memory_read",
         "memory_guard",
         "startup_timing",
         # M4 新增（客户端 PR-4.2）

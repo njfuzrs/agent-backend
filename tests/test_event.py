@@ -299,6 +299,22 @@ def test_unknown_event_name_rejected_not_stored(client):
     assert rejects["items"][0]["event_name"] == "tool_faliure"
 
 
+def test_memory_read_is_accepted(client):
+    """客户端 events.ts 的 MEMORY_READ 在发，白名单漏了它会被当成 unknown_event_name 拒收。"""
+    code = _issue_code(client)
+    cred = _enroll(client, code, "dev-memread")
+    ev = _event(
+        "memory_read",
+        1_780_557_354_705,
+        metadata={"memory_scope": "project", "is_index": False},
+    )
+    resp = _post(client, cred, [ev])
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["accepted"] == 1
+    assert resp.json()["rejected"] == 0
+    assert _db_count(client) == 1
+
+
 def test_mixed_batch_does_not_reject_whole(client):
     """2 好 1 坏 → 202 accepted=2 rejected=1，不整批退。"""
     code = _issue_code(client)
