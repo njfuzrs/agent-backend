@@ -46,7 +46,7 @@ def parse_traj_content(content: bytes, tool_source: str = "claude-code") -> dict
 
     now_utc = datetime.now(timezone.utc).isoformat()
 
-    return {
+    return strip_nul({
         "session_id": session_id,
         "tool_source": tool_source,
         "model": metadata.get("model", ""),
@@ -73,7 +73,23 @@ def parse_traj_content(content: bytes, tool_source: str = "claude-code") -> dict
         "traj_file_size": len(content),
         "uploaded_at": now_utc,
         "updated_at": now_utc,
-    }
+    })
+
+
+def strip_nul(value):
+    """递归去掉字符串里的 NUL（U+0000）。
+
+    PG 的 text 不接受 0x00（sqlstate 22021），而轨迹里的 user_prompts / 工具输出
+    确实会带它（2026-10 生产 7 天 11 次 500）。只清写进 DB 的字段：OSS 里的原文件
+    保持逐字节不变，sha256 也照旧对原文件算。
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "") if "\x00" in value else value
+    if isinstance(value, dict):
+        return {k: strip_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [strip_nul(v) for v in value]
+    return value
 
 
 def _str_or_none(value) -> Optional[str]:
