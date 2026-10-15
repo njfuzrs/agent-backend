@@ -96,6 +96,33 @@ class DeviceCredential(Base):
     )
 
 
+class IdentityAudit(Base):
+    """组织 / 团队 / 设备归属变更审计。只追加，不更新，不删除。
+
+    不建 FK：组织、团队、设备将来被删时审计必须留下来，对象一律存对外 slug 文本。
+    target_type ∈ org / team / device；team 的 target_id 只在组织内唯一，所以 org_id 单独存。
+    detail_json 记变更前后值（如设备从哪个 org/team 移到哪个），不放任何凭据。
+    """
+
+    __tablename__ = "identity_audit"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    action = Column(Text, nullable=False)  # org_create / org_rename / team_create / team_rename / device_move
+    target_type = Column(Text, nullable=False)
+    target_id = Column(Text, nullable=False)
+    org_id = Column(Text, nullable=False, default="")
+    detail_json = Column(Text, nullable=False, default="{}")
+    reason = Column(Text, nullable=False, default="")
+    actor = Column(Text, nullable=False, default="")
+    created_at = Column(Text, nullable=False)
+    request_id = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_identity_audit_created_at", "created_at"),
+        Index("idx_identity_audit_target", "target_type", "target_id"),
+    )
+
+
 class EnrollCode(Base):
     """一次性注册码。code_hash = sha256(明文)，用过即写 used_at。"""
 

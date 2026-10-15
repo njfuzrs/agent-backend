@@ -1,5 +1,6 @@
-"""组织 / 注册码 / 设备列表。供管理台调用，不走控制面 Bearer。"""
+"""组织 / 团队 / 注册码 / 设备列表与归属。供管理台调用，不走控制面 Bearer。"""
 
+import json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -9,20 +10,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.logging import current_actor, get_logger
+from app.core.logging import current_actor, current_request_id, get_logger
 from app.core.timeutil import iso_after, utc_now_iso
-from app.modules.identity.model import Device, DeviceCredential, EnrollCode, Organization, Team
+from app.modules.identity.model import Device, DeviceCredential, EnrollCode, IdentityAudit, Organization, Team
 from app.modules.identity.schemas import (
     DeviceListItem,
     DeviceListResponse,
+    DeviceMove,
+    DeviceMoveResponse,
     EnrollCodeCreate,
     EnrollCodeCreated,
     EnrollCodeItem,
     EnrollCodeListResponse,
+    IdentityAuditItem,
+    IdentityAuditListResponse,
     OrganizationCreate,
     OrganizationItem,
     OrganizationListResponse,
+    OrganizationRename,
     RevokeResponse,
+    TeamCreate,
+    TeamItem,
+    TeamListResponse,
+    TeamRename,
 )
 from app.modules.identity.service.secrets import hash_secret, mint_enroll_code
 
@@ -86,8 +96,208 @@ async def create_organization(db: AsyncSession, payload: OrganizationCreate) -> 
         created_at=now_iso,
     )
     db.add(org)
+    _audit(db, "org_create", "org", org.org_id, org.org_id, {"name": org.name}, payload.reason, now_iso)
     await db.commit()
+    _admin_write("org_create", org.org_id)
     return OrganizationItem(org_id=org.org_id, name=org.name, created_at=org.created_at, device_count=0)
+
+
+async def rename_organization(db: AsyncSession, org_id: str, payload: OrganizationRename) -> OrganizationItem:
+    """只改展示名。org_id 是策略 / 预算 / 市场条目里的文本副本，不能改。"""
+    org = await _require_org(db, org_id)
+    now_iso = utc_now_iso()
+    old = org.name
+    org.name = payload.name
+    _audit(db, "org_rename", "org", org.org_id, org.org_id, {"old_name": old, "new_name": org.name}, payload.reason, now_iso)
+    await db.commit()
+    _admin_write("org_rename", org.org_id)
+    count = (await db.execute(select(func.count(Device.id)).where(Device.organization_id == org.id))).scalar_one()
+    return OrganizationItem(org_id=org.org_id, name=org.name, created_at=org.created_at, device_count=int(count))
+
+
+async def list_teams(db: AsyncSession, org_id: Optional[str] = None) -> TeamListResponse:
+    count_row = (
+        select(Device.team_id, func.count(Device.id).label("n"))
+        .where(Device.team_id.is_not(None))
+        .group_by(Device.team_id)
+        .subquery()
+    )
+    stmt = (
+        select(Team, Organization.org_id, func.coalesce(count_row.c.n, 0))
+        .join(Organization, Team.organization_id == Organization.id)
+        .outerjoin(count_row, count_row.c.team_id == Team.id)
+        .order_by(Organization.org_id.asc(), Team.team_id.asc())
+    )
+    if org_id:
+        stmt = stmt.where(Organization.org_id == org_id)
+    result = await db.execute(stmt)
+    items = [
+        TeamItem(org_id=org_slug, team_id=team.team_id, name=team.name, created_at=team.created_at, device_count=int(n))
+        for team, org_slug, n in result.all()
+    ]
+    return TeamListResponse(items=items)
+
+
+async def create_team(db: AsyncSession, payload: TeamCreate) -> TeamItem:
+    """在已存在的组织下建团队。组织不存在 → 404：不在这里顺带建组织，避免手滑造出孤儿组织。"""
+    org = await _require_org(db, payload.org_id)
+    existing = await db.execute(
+        select(Team).where(Team.organization_id == org.id, Team.team_id == payload.team_id)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"团队 {payload.team_id!r} 在组织 {org.org_id!r} 下已存在")
+    now_iso = utc_now_iso()
+    team = Team(
+        organization_id=org.id,
+        team_id=payload.team_id,
+        name=payload.name or payload.team_id,
+        created_at=now_iso,
+    )
+    db.add(team)
+    _audit(db, "team_create", "team", team.team_id, org.org_id, {"name": team.name}, payload.reason, now_iso)
+    await db.commit()
+    _admin_write("team_create", f"{org.org_id}/{team.team_id}")
+    return TeamItem(org_id=org.org_id, team_id=team.team_id, name=team.name, created_at=team.created_at)
+
+
+async def rename_team(db: AsyncSession, org_id: str, team_id: str, payload: TeamRename) -> TeamItem:
+    """只改展示名，team_id 同样是策略 / 预算 / 市场的文本副本。"""
+    org = await _require_org(db, org_id)
+    team = await _require_team(db, org, team_id)
+    now_iso = utc_now_iso()
+    old = team.name
+    team.name = payload.name
+    _audit(db, "team_rename", "team", team.team_id, org.org_id, {"old_name": old, "new_name": team.name}, payload.reason, now_iso)
+    await db.commit()
+    _admin_write("team_rename", f"{org.org_id}/{team.team_id}")
+    count = (await db.execute(select(func.count(Device.id)).where(Device.team_id == team.id))).scalar_one()
+    return TeamItem(
+        org_id=org.org_id, team_id=team.team_id, name=team.name, created_at=team.created_at, device_count=int(count)
+    )
+
+
+async def move_device(db: AsyncSession, device_id: str, payload: DeviceMove) -> DeviceMoveResponse:
+    """改设备的组织 / 团队。飞书登录的设备同样可改（登录只回答「谁」，归属由管理员定）。
+
+    不动凭据：require_device 每次请求都从库里现查 org / team，下一次控制面请求就是新值。
+    再次 `sid-code login` 也保留这里设的归属（login.issue_login_credential 不改老设备的组织）。
+    值没变时不写审计、返回 changed=false。
+    """
+    row = await db.execute(
+        select(Device)
+        .options(selectinload(Device.organization), selectinload(Device.team))
+        .where(Device.device_id == device_id)
+    )
+    device = row.scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status_code=404, detail="device not found")
+    org = await _require_org(db, payload.org_id)
+    team = await _require_team(db, org, payload.team_id) if payload.team_id else None
+
+    old_org = device.organization.org_id if device.organization else ""
+    old_team = device.team.team_id if device.team else ""
+    new_team = team.team_id if team is not None else ""
+    if old_org == org.org_id and old_team == new_team:
+        return DeviceMoveResponse(device_id=device.device_id, org_id=org.org_id, team_id=new_team, changed=False)
+
+    now_iso = utc_now_iso()
+    device.organization_id = org.id
+    device.team_id = team.id if team is not None else None
+    device.updated_at = now_iso
+    _audit(
+        db,
+        "device_move",
+        "device",
+        device.device_id,
+        org.org_id,
+        {"from": {"org_id": old_org, "team_id": old_team}, "to": {"org_id": org.org_id, "team_id": new_team}},
+        payload.reason,
+        now_iso,
+    )
+    await db.commit()
+    _admin_write("device_move", device.device_id)
+    return DeviceMoveResponse(device_id=device.device_id, org_id=org.org_id, team_id=new_team, changed=True)
+
+
+async def list_audit(
+    db: AsyncSession,
+    target_type: Optional[str] = None,
+    target_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+    limit: int = 200,
+) -> IdentityAuditListResponse:
+    stmt = select(IdentityAudit).order_by(IdentityAudit.id.desc()).limit(limit)
+    if target_type:
+        stmt = stmt.where(IdentityAudit.target_type == target_type)
+    if target_id:
+        stmt = stmt.where(IdentityAudit.target_id == target_id)
+    if org_id:
+        stmt = stmt.where(IdentityAudit.org_id == org_id)
+    rows = (await db.execute(stmt)).scalars().all()
+    items = []
+    for a in rows:
+        try:
+            detail = json.loads(a.detail_json or "{}")
+        except ValueError:
+            detail = {}
+        items.append(
+            IdentityAuditItem(
+                id=a.id,
+                action=a.action,
+                target_type=a.target_type,
+                target_id=a.target_id,
+                org_id=a.org_id,
+                detail=detail if isinstance(detail, dict) else {},
+                reason=a.reason,
+                actor=a.actor,
+                created_at=a.created_at,
+                request_id=a.request_id,
+            )
+        )
+    return IdentityAuditListResponse(items=items)
+
+
+def _audit(
+    db: AsyncSession,
+    action: str,
+    target_type: str,
+    target_id: str,
+    org_id: str,
+    detail: dict,
+    reason: str,
+    now_iso: str,
+) -> None:
+    """与业务写在同一事务里：要么都落，要么都不落。"""
+    db.add(
+        IdentityAudit(
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            org_id=org_id,
+            detail_json=json.dumps(detail, ensure_ascii=False, sort_keys=True),
+            reason=reason or "",
+            actor=current_actor(),
+            created_at=now_iso,
+            # 取不到就留空。不为没有请求的写入编造编号（方案 §3.9）。
+            request_id=current_request_id(),
+        )
+    )
+
+
+async def _require_org(db: AsyncSession, org_id: str) -> Organization:
+    row = await db.execute(select(Organization).where(Organization.org_id == org_id))
+    org = row.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail=f"组织 {org_id!r} 不存在")
+    return org
+
+
+async def _require_team(db: AsyncSession, org: Organization, team_id: str) -> Team:
+    row = await db.execute(select(Team).where(Team.organization_id == org.id, Team.team_id == team_id))
+    team = row.scalar_one_or_none()
+    if team is None:
+        raise HTTPException(status_code=404, detail=f"团队 {team_id!r} 在组织 {org.org_id!r} 下不存在")
+    return team
 
 
 async def list_organizations(db: AsyncSession) -> OrganizationListResponse:
@@ -233,7 +443,8 @@ async def revoke_device(db: AsyncSession, device_id: str) -> RevokeResponse:
 def _admin_write(action: str, target_id: str) -> None:
     """管理台写操作完成一条。actor 从上下文取（方案 §3.6、§3.9）。
 
-    identity 没有审计表，这条日志是吊销与签发注册码的唯一运行记录。
+    组织 / 团队 / 设备归属变更另有 identity_audit 表（D1）；吊销与签发注册码
+    的审计表留给 D5，目前这条日志仍是它们的唯一运行记录。
     注册码明文不进日志，它只在响应里出现一次。
     """
     logger.info(
