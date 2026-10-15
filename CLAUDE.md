@@ -184,7 +184,7 @@ cd frontend && pnpm run build
 
 # 门禁自查（提交前跑一遍）
 cd backend && ruff check . && alembic check          # lint + schema 漂移
-python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_event_plugin_usage.py ../tests/test_cost.py ../tests/test_auth_login.py ../tests/test_auth_cli.py ../tests/test_identity_ledger.py ../tests/test_marketplace.py ../tests/test_deploy_scripts.py ../tests/test_trajectory_exit_status.py -v  # 边界 + 身份 + flag + policy + event + cost + 登录 + 身份落账 + 插件市场 + 发版脚本 + 轨迹成功率口径
+python -m pytest ../tests/test_boundaries.py ../tests/test_identity.py ../tests/test_flag.py ../tests/test_policy.py ../tests/test_event.py ../tests/test_event_plugin_usage.py ../tests/test_event_names_contract.py ../tests/test_cost.py ../tests/test_auth_login.py ../tests/test_auth_cli.py ../tests/test_identity_ledger.py ../tests/test_marketplace.py ../tests/test_deploy_scripts.py ../tests/test_trajectory_exit_status.py -v  # 边界 + 身份 + flag + policy + event + cost + 登录 + 身份落账 + 插件市场 + 发版脚本 + 轨迹成功率口径
 
 # 数据库迁移
 cd backend && alembic upgrade head                   # 本地：建库/升级
