@@ -171,7 +171,23 @@ def test_basic_auth_rejection_logs_reason(client, caplog):
     assert resp.status_code == 401
     text = rendered(caplog)
     assert "reason=basic_rejected" in text
+    assert "reason=basic_missing" not in text
     assert "guessed-password" not in text
+
+
+def test_basic_missing_logs_distinct_reason(client, caplog):
+    """没有会话也没有 Authorization 头记 basic_missing，不与口令错混在一起。
+
+    会话过期的浏览器与发版冒烟的匿名 curl 都走这里；混进 basic_rejected
+    会被误读成「有客户端在用旧口令」。
+    """
+    with caplog.at_level(logging.WARNING, logger="agent.auth"):
+        resp = client.get("/api/v1/trajectories")
+    assert resp.status_code == 401
+    assert resp.headers.get("WWW-Authenticate") == "Basic"
+    text = rendered(caplog)
+    assert "reason=basic_missing" in text
+    assert "reason=basic_rejected" not in text
 
 
 # ---------------------------------------------------------------------------

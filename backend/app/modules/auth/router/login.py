@@ -109,10 +109,15 @@ def _reject(reason: str, error: str) -> RedirectResponse:
 
 @router.get("/options", response_model=LoginOptions)
 async def login_options():
-    """登录页据此决定显示「飞书登录」还是口令表单。不泄露任何配置值。"""
+    """前端据此决定展示哪些入口。只返回布尔开关，不含配置值。
+
+    登录页按它显示「飞书登录」还是口令表单；设备页按 enroll_enabled 决定
+    「签发注册码」是否置灰（开关关闭时签出的码换不到凭据，见 D2）。
+    """
     return LoginOptions(
         feishu_enabled=settings.login.feishu_enabled,
         password_enabled=settings.login.AUTH_PASSWORD_LOGIN_ENABLED,
+        enroll_enabled=settings.control_plane.CTL_ENROLL_ENABLED,
     )
 
 

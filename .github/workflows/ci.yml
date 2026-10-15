@@ -80,7 +80,7 @@ jobs:
       # test_lock_matches_requirements 要用 uv 重解析锁。不装它那条在 CI 上永远 SKIPPED；
       # 版本钉死，和本机生成锁的 uv 同版本，免得输出格式差异造成假红。
       - run: pip install uv==0.10.0
-      - run: python -m pytest tests/test_boundaries.py tests/test_auth_login.py tests/test_auth_cli.py tests/test_feishu_delegation.py tests/test_marketplace.py tests/test_identity_ledger.py tests/test_identity.py tests/test_identity_org_team.py tests/test_flag.py tests/test_policy.py tests/test_event.py tests/test_event_plugin_usage.py tests/test_event_names_contract.py tests/test_cost.py tests/test_deploy_scripts.py tests/test_logging.py tests/test_trajectory_exit_status.py tests/test_plugin_sources.py -v
+      - run: python -m pytest tests/test_boundaries.py tests/test_auth_login.py tests/test_auth_cli.py tests/test_feishu_delegation.py tests/test_marketplace.py tests/test_identity_ledger.py tests/test_identity.py tests/test_identity_org_team.py tests/test_flag.py tests/test_policy.py tests/test_event.py tests/test_event_plugin_usage.py tests/test_event_names_contract.py tests/test_cost.py tests/test_deploy_scripts.py tests/test_logging.py tests/test_logging_failures.py tests/test_trajectory_exit_status.py tests/test_trajectory_upload_nul.py tests/test_plugin_sources.py -v
         # test_boundaries 覆盖六条纪律（含 /ctl/flags 无认证豁免的两道补偿锁）+ events 三条门禁
         # test_auth_login 覆盖 P1 飞书登录：401/403、state 重放/过期/nonce 不匹配、拒绝授权、跨租户、吊销、口令开关
         # test_identity 覆盖 enroll / 吊销 / 明文不入库
@@ -89,6 +89,7 @@ jobs:
         # test_policy 覆盖 /ctl/policy Bearer + device>team>org + reason 必填
         # test_event 覆盖 POST /events 401 / 幂等 / 白名单 / 两个固定聚合
         # test_event_names_contract 覆盖事件名白名单与 sid-code 快照逐项相等
+        # test_trajectory_upload_nul 覆盖轨迹含 NUL 能入库、OSS 孤儿重试自愈、解析失败不留文件
         # test_cost 覆盖 POST /usage/ledger 401 / 30 次上报 1 行 / 预算 device>team>org / 默认 alert
         # test_deploy_scripts 覆盖 backup_pg / release 契约（不连生产）
         # test_plugin_sources 覆盖企业市场插件源码（plugins/）与市场制品一致性

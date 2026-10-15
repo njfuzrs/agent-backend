@@ -11,12 +11,14 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { fetchBridgeSessions } from '../../bridge/services/api'
+import { fetchLoginOptions } from '../../trajectory/services/api'
 import {
   createEnrollCode,
   fetchDevices,
@@ -112,6 +114,14 @@ export default function DeviceList() {
     queryKey: ['identity-enroll-codes'],
     queryFn: fetchEnrollCodes,
   })
+
+  // 服务端未开启注册端点（CTL_ENROLL_ENABLED=false）时把「签发注册码」置灰：
+  // 那种状态下签出的码在设备侧换不到凭据（D2）。拉不到配置时兜底为不置灰。
+  const { data: loginOptions } = useQuery({
+    queryKey: ['auth-options'],
+    queryFn: fetchLoginOptions,
+  })
+  const enrollDisabled = loginOptions?.enroll_enabled === false
 
   // 只要 paired。waiting 还没有人在遥控，不点绿。
   const { data: bridge } = useQuery({
@@ -300,9 +310,24 @@ export default function DeviceList() {
         size="small"
         title="设备列表"
         extra={
-          <Button type="primary" onClick={() => { setIssuedCode(null); setCreateOpen(true) }}>
-            签发注册码
-          </Button>
+          <Tooltip
+            title={
+              enrollDisabled
+                ? '服务端未开启注册端点（CTL_ENROLL_ENABLED=false）：签出的码在设备侧换不到凭据，请先在服务端打开开关。'
+                : ''
+            }
+          >
+            {/* disabled 的按钮不派发鼠标事件，Tooltip 需要 span 承载 hover */}
+            <span style={{ display: 'inline-block' }}>
+              <Button
+                type="primary"
+                disabled={enrollDisabled}
+                onClick={() => { setIssuedCode(null); setCreateOpen(true) }}
+              >
+                签发注册码
+              </Button>
+            </span>
+          </Tooltip>
         }
       >
         <Table
@@ -463,7 +488,9 @@ export default function DeviceList() {
       >
         {issuedCode ? (
           <Space orientation="vertical" style={{ width: '100%' }}>
-            <Typography.Text>明文只这一次。交给设备后让它 POST /api/v1/ctl/enroll。</Typography.Text>
+            <Typography.Text>
+              明文只这一次。交给设备后，在设备上执行 <code>sid-code auth enroll --code {'<本码>'} --org {'<组织ID>'}</code> 兑换凭据。
+            </Typography.Text>
             <Typography.Paragraph copyable style={{ fontFamily: 'monospace' }}>
               {issuedCode}
             </Typography.Paragraph>

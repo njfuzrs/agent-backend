@@ -20,10 +20,13 @@ class MeResponse(BaseModel):
 
 
 class LoginOptions(BaseModel):
-    """登录页据此决定展示哪些按钮。"""
+    """前端据此决定展示哪些入口（登录页按钮 / 设备页签发注册码）。"""
 
     feishu_enabled: bool
     password_enabled: bool
+    # 注册端点开关（CTL_ENROLL_ENABLED）。关闭时设备页把「签发注册码」置灰：
+    # 那种状态下签出的码在 /ctl/enroll 换不到凭据（D2）。
+    enroll_enabled: bool
 
 
 class UserItem(BaseModel):
