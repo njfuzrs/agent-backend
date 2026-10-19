@@ -26,7 +26,7 @@ alembic>=1.20.0
 mako<1.4.2
 # 飞书 token 静态加密（Fernet / MultiFernet，P4）。原先只是 oss2 的传递依赖，显式声明。
 # 上限跟着 pyopenssl==25.3.0 的约束走，由锁定死实际版本。
-cryptography>=46.0.0
+cryptography>=50.0.2
 # oss2 的传递依赖 aliyunsdkcore 在 import 时 import pyOpenSSL，但谁都不声明它。
 # 生产的 pyOpenSSL 来自 apt（python3-openssl 21.0.0），配不上 cryptography 50，
 # worker 在 import oss2 时崩溃、服务起不来（2026-09-25 发版实测）。
