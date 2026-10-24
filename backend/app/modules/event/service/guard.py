@@ -56,6 +56,9 @@ ALLOWED_EVENT_NAMES = frozenset(
         # 客户端补了生产者后这里漏同步，上线后一直被记为 unknown_event_name。
         "memory_read",
         "memory_guard",
+        # 记忆写入质量（sid-code save_memory 成功落盘时发）：类型 / scope / 来源枚举 +
+        # missing_why / reference_no_url / looks_snapshot 等布尔，不含 key 与内容。
+        "memory_write",
         "startup_timing",
         # M4 新增（客户端 PR-4.2）
         "policy_enforced",
